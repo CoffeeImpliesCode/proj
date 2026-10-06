@@ -1,0 +1,116 @@
+# Upstream's own ignore conventions, kept verbatim. Nothing above this line is
+# ours, and nothing below it removes an upstream entry to make room for a
+# fork-owned one.
+#
+# The OSGeo/PROJ 9.9.0 release tarball ships no `.gitignore`: `ls -a` on the
+# unpacked `proj-9.9.0/` shows `AUTHORS.md CITATION CITATION.cff CMakeLists.txt
+# COPYING ChangeLog INSTALL NEWS.md README.md cmake data examples include man
+# scripts src test` and no dotfile, and `UPSTREAM.sha256` records exactly the
+# ten top-level files plus the eight directories with no `.gitignore` among them.
+# So there is no upstream ignore file to preserve or merge with, and every entry
+# below is this fork's own. The entries in the first block are upstream's *build
+# system* outputs rather than an upstream ignore file, listed so that a
+# CMake-produced object, archive or executable cannot be committed into a tree
+# that is built with Zig instead: `src/lib_proj.cmake` and the `bin_*.cmake`
+# includes under `src/apps/` produce exactly those kinds of files.
+#
+#   * `CMakeFiles/`, `CMakeCache.txt`, `cmake_install.cmake`,
+#     `Makefile`, `CTestTestfile.cmake` and `CMakeFiles/` come from configuring
+#     or building PROJ with CMake (`CMakeLists.txt` has no out-of-source guard for
+#     every artefact; the generated parser-refresh targets
+#     `generate_wkt1_parser`/`generate_wkt2_parser` at
+#     `src/lib_proj.cmake:326-368` write `wkt1_generated_parser.c` and
+#     `wkt2_generated_parser.c` back into `src/` as well).
+#   * `CTestTestfile.cmake` and `Testing/` come from a `ctest` run.
+#   * `proj.db`, `all.sql.in`, `PROJ_DB_SQL_MD5.h` and the `o/` and
+#     `for_tests/` trees are the outputs of `data/CMakeLists.txt:39-49` and of
+#     `generate_proj_db.cmake`. **This package generates all four into Zig's
+#     cache instead**, through the host-run generator in `build.zig`; they are
+#     listed because a `cmake` run in this tree would write them into `data/`,
+#     and the generated `proj.db` must never be committed as though it were
+#     upstream material.
+#   * `*.gtx` and `*.gsb` are grid files. **None of them is upstream
+#     material**: `data/` ships no grid (`data/CH:9` says the grids must be
+#     downloaded separately and names `CHENyx06_ETRS.gsb`), and `data/tests/`
+#     holds only the test grids upstream's own `data/CMakeLists.txt:76-92`
+#     copies, which are recorded in `UPSTREAM.sha256` as imported files. The
+#     two patterns below are the only broad entries that could ever match an
+#     imported grid, which is why the imported ones are named explicitly in
+#     `UPSTREAM.sha256` and why `tools/check-provenance.sh` reports a missing
+#     file rather than a reset Git index: an ignored imported file is reported,
+#     never silently accepted. `*.tif` is deliberately *not* ignored: `data/`
+#     installs three `*.schema.json` files that name GeoTIFF in their own
+#     descriptions, `data/sql/grid_transformation.sql` refers to `.tif` grids in
+#     its own text, and a future upstream test grid could be a GeoTIFF. Nothing
+#     in this package downloads a grid, so there is nothing for `*.tif` to
+#     catch.
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+CMakeScripts/
+Makefile
+*.o
+*.obj
+*.a
+*.so
+*.so.*
+*.lib
+*.exp
+*.pdb
+*.dll
+*.exe
+*.manifest
+*.dmp
+*.swp
+
+# Generated datum database and its inputs, if a CMake build ever runs here.
+data/proj.db
+data/all.sql.in
+data/PROJ_DB_SQL_MD5.h
+data/all.sql.in.extra_validation
+data/proj.db.extra_validation
+data/for_tests/
+data/o/
+data/file_embed/
+*.gtx
+*.gsb
+
+# zig build artefacts (fork addition).
+#
+# These are directories rather than single files because a normal `zig build`
+# creates them, and a normal `zig build` must not dirty the tree or leak into the
+# package published from it. None of them is named in build.zig.zon `.paths`, and
+# that list is an allowlist, so an ignored directory cannot become part of the
+# package even if this file were deleted.
+.zig-cache/
+zig-out/
+# Zig 0.16 fetches dependencies into a project-local directory. This package
+# declares no dependencies, so this exists only so that a future one cannot
+# commit a fetched tree.
+zig-pkg/
+
+# The consumer package builds inside this repository and has its own cache and
+# output tree. It is ignored here as well as in consumer/.gitignore so a build
+# run from the repository root cannot commit it by accident.
+consumer/.zig-cache/
+consumer/zig-out/
+consumer/zig-pkg/
+
+# Nix and devenv working-tree artefacts (fork addition).
+#
+# `nix build` writes `result` (and `result-1`, `result-2`, ... on a rebuild)
+# into the directory that asked for it, and `devenv` writes its resolved inputs
+# and its state beside the project. None of them is named in build.zig.zon
+# `.paths`, so an ignored path cannot become part of the package either.
+# `devenv.lock` and `flake.lock` are deliberately *not* here: they are real
+# inputs, they belong to the driver, and ignoring them would be the wrong way to
+# keep a build out of a commit.
+result
+result-*
+.devenv/
+.devenv.flake.nix
+.devenv.flakes/
+devenv.local.nix
+.direnv/

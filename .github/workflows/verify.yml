@@ -1,0 +1,185 @@
+# SPDX-License-Identifier: MIT
+#
+# Verification for the Zig package in this repository.
+#
+# Upstream's tree at tag 9.9.0 contains no .github directory: `ls -a` on the
+# unpacked `proj-9.9.0/` shows no dotfile at the top level, and `UPSTREAM.sha256`
+# records exactly the ten top-level files plus the eight directories with no
+# workflow among them. There is therefore no upstream workflow here to leave
+# alone and none that could be retargeted at another maintainer's infrastructure.
+# Every step below is this fork's and names a command that `build.zig` defines.
+#
+# One job, one question: does this package build, install, test, compile across
+# the six-target matrix, keep its upstream bytes intact, and serve a package that
+# did not write it -- in that order, because that is the order the failures are
+# cheapest to diagnose in.
+#
+#   1. immutable upstream source and licence records
+#      tools/check-provenance.sh. The bytes, the exact upstream file set, the
+#      preserved upstream front page, PROJ's MIT-style grant and SQLite's
+#      public-domain notice. Runs first because every later step compiles what
+#      this one just checked.
+#   2. zig build
+#      the default delivery: all 219 translation units, both generated inputs,
+#      and the whole installed tree.
+#   3. zig build test, in Debug and then in ReleaseSafe
+#      the facade tests and the API exercise, as real addTest/addRunArtifact work
+#      for the selected target. Both modes are separate steps because
+#      `build.zig` has no mode-specific branch: a bound that one mode checks and
+#      the other does not cannot be written into them, so both have to be asked.
+#   4. zig build smoke
+#      the example program, against the generated `proj.db` through `PROJ_DATA`
+#      with `PROJ_NETWORK=OFF`.
+#   5. zig build check
+#      the compile-only matrix over all six cross targets. It runs nothing, so a
+#      result from it is compile evidence and never a claim that a cross-built
+#      binary executed.
+#   6. zig build run in consumer/
+#      the published module reached from a package that did not write it, through
+#      a relative path dependency rather than a fetch.
+#
+# There is no `continue-on-error` anywhere in this file and there is no matrix row
+# with a tolerated target. The six cross targets are compiled by `check` inside
+# the build graph rather than as matrix rows here, and each one is reached
+# unconditionally; if a target turns out to be unsupported, the honest edit is to
+# record the observed failure in FORK-NOTES.md, not to add a flag that hides it.
+#
+# There is no system-library mode step, because `build.zig` offers no
+# `-Dsystem` option and nothing links `-lproj` as a system library. The rule is
+# recorded as NOT APPLICABLE in `build.zig`'s header rather than turned into a
+# step that would have to be skipped.
+#
+# The full 53-platform matrix is not in this file. `cross-test`, run from the
+# package root, builds and *runs* the `test` step for every platform in Zig
+# 0.16.0's published Tier 1/2 table through this repository's own build graph,
+# using `cross-test.profile.sh` for its settings. It is not a job here because
+# `cross-test` and its sibling helpers are a host-local tool with its own runner
+# detection and its own scratch policy, not something a GitHub runner has;
+# adding a job that invoked a path it does not have would fail for a reason that
+# has nothing to do with this package, and wrapping that job in an availability
+# check would turn a missing gate into a green one. So this file does not pretend
+# to cover it and does not stand in for it: the `check` step below runs nothing,
+# and a platform with no runner on the host is recorded as explicit `build_only`
+# coverage, never as a pass. The command and its receipts belong in README.md and
+# FORK-NOTES.md.
+#
+# Every expectation in this file is the command's own exit code. Nothing here
+# greps a build log for a version string, counts a test, or compares two calls
+# into this build with each other.
+
+name: verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: native build, tests, cross matrix, provenance and consumer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      # 1. The bytes, the exact upstream file set, and the licences. This runs
+      # before anything compiles because every later step compiles what it just
+      # checked: PROJ ships no `.gitignore`, so `sha256sum -c` alone would not
+      # catch an addition, and the script's second question is what closes that
+      # gap. It also needs no compiler, so a provenance failure is reported as a
+      # provenance failure rather than as a compile error somewhere later.
+      - name: immutable upstream source and licence records
+        run: |
+          set -euo pipefail
+          sha256sum -c --quiet UPSTREAM.sha256
+          tools/check-provenance.sh
+
+      # The default delivery installs to a prefix under the runner's scratch,
+      # not into `zig-out` inside the checkout it is verifying: an install step
+      # that writes into the tree it is gating can read back its own earlier
+      # output. `tools/check-provenance.sh` has already compared the tree against
+      # `UPSTREAM.sha256`, so an install step that dirtied the checkout would be
+      # caught on the next run of this file rather than being invisible.
+      - name: build and install the default delivery
+        run: zig build --prefix "$RUNNER_TEMP/prefix-default" --summary all -j4
+
+      # Both generated inputs are produced by this step and by nothing else: the
+      # per-target `proj_config.h` for x86_64-linux-gnu, and `proj.db` from the
+      # 50 files `data/sql_filelist.cmake` concatenates, with the generator's
+      # own assertion against `data/sql/proj.db.sql.expected.md5`. If that
+      # assertion were ever to fail, this step is where it surfaces, and the
+      # database is not written at all.
+      - name: the datum database is generated and its SQL digest asserted
+        run: |
+          set -euo pipefail
+          test -s "$RUNNER_TEMP/prefix-default/share/proj/proj.db"
+          test -s "$RUNNER_TEMP/prefix-default/lib/pkgconfig/proj.pc"
+          test -s "$RUNNER_TEMP/prefix-default/include/proj.h"
+          test -s "$RUNNER_TEMP/prefix-default/share/doc/proj/COPYING"
+          echo "installed tree present at $RUNNER_TEMP/prefix-default"
+
+      # 3. Debug first. `build.zig` compiles the core, the facade, the tests and
+      # the example identically in both modes, so both are asked and neither is
+      # derived from the other. Each of these steps sets `PROJ_DATA` to the
+      # installed share/proj directory and `PROJ_NETWORK=OFF` inside the build
+      # graph, which is why they need no environment here.
+      - name: facade tests and API exercise, Debug
+        run: zig build test -Doptimize=Debug --summary all -j4
+
+      - name: facade tests and API exercise, ReleaseSafe
+        run: zig build test -Doptimize=ReleaseSafe --summary all -j4
+
+      # 4. The example, against the same generated database.
+      - name: example program against the generated datum data
+        run: zig build smoke --summary all -j4
+
+      # 5. The compile-only six-target matrix: x86_64-linux-gnu,
+      # aarch64-linux-gnu, aarch64-macos-none, x86_64-windows-gnu,
+      # riscv64-linux-gnu and wasm32-wasi. Nothing runs, so a result here is
+      # compile evidence only. This is by far the slowest step: roughly 220 C and
+      # C++ translation units per target, and `src/iso19111/factory.cpp` is over
+      # ten thousand lines of C++17. The timeout is set generously rather than
+      # tightly, because a timeout that fired mid-cell would report a fact about
+      # the timeout.
+      - name: compile-only cross matrix, all six targets
+        run: zig build check --summary all -j4
+        timeout-minutes: 120
+
+      # The same six targets through the shared delivery. `check` refuses
+      # `-Dlinkage=dynamic` for a target with no dynamic linker, prints that
+      # target by name with the platform fact it resolved, and builds no cell for
+      # it -- a printed exclusion, not a pass, and not a substitute for the
+      # static matrix above.
+      - name: compile-only cross matrix, shared delivery
+        run: zig build check -Dlinkage=dynamic --summary all -j4
+        timeout-minutes: 120
+
+      # 6. The dependent package, built and run as itself. It reaches the library
+      # through the relative path dependency in its own manifest, so this is the
+      # proof that `dep.module("proj")` resolves from outside this package. It is
+      # a second build graph with its own cache, which is why the runner's scratch
+      # is named explicitly rather than inherited from the step above.
+      - name: the separate consumer package
+        working-directory: consumer
+        run: |
+          set -euo pipefail
+          zig build run \
+            --cache-dir "$RUNNER_TEMP/consumer-cache" \
+            --prefix "$RUNNER_TEMP/prefix-consumer" \
+            --summary all \
+            -j4
+
+      # The provenance gate one last time, over the tree as the run left it. It
+      # is cheap, needs no compiler, and it is the difference between "the
+      # checkout I verified was the checkout I built" and an assumption.
+      - name: the tree is unchanged by the run
+        run: |
+          set -euo pipefail
+          sha256sum -c --quiet UPSTREAM.sha256
+          tools/check-provenance.sh
