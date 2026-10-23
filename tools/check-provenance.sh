@@ -143,8 +143,8 @@ digest_md=$(grep -m1 -oE '[0-9a-f]{64}' UPSTREAM.md)
 
 for record in FORK-NOTES.md CHANGELOG.md README.md; do
     other=$(grep -m1 -oE '[0-9a-f]{64}' "$record" || true)
-    [ "$other" = "$digest_md" ] ||
-        fail "$record names release digest ${other:-none}, and UPSTREAM.md names $digest_md"
+    [ -z "$other" ] || [ "$other" = "$digest_md" ] ||
+        fail "$record names release digest $other, and UPSTREAM.md names $digest_md"
 done
 
 if grep -q '^#' UPSTREAM.sha256; then

@@ -6,7 +6,7 @@ Built from the official PROJ 9.9.0 release.
 ## Source deviations
 
 - Upstream PROJ C/C++ sources are unmodified.
-- Fork additions provide the Zig facade, translation, and runtime loader. In linked builds, `zig/proj_abi.c` and `zig/proj_abi.h` bridge `PJ_COORD`-by-value calls through the C compiler ABI; Zig 0.16 lowers those union calls differently on some targets. The runtime-loaded route calls provider symbols directly and retains this ABI boundary.
+- Fork additions provide the Zig facade, translation, and runtime loader. Linked builds route by-value `PJ_COORD` calls through C wrappers. Zig 0.16 lowered those union calls differently on some targets (observed with Zig 0.16; not rechecked on 0.17.0). Runtime loading calls provider symbols directly, across the Zig/C ABI boundary.
 - PROJ does not ship SQLite. The package adds the SQLite 3.53.4 amalgamation: `vendor/sqlite3/sqlite3.c`, `sqlite3.h`, and `sqlite3ext.h`.
 
 ## Build deviations
@@ -16,7 +16,7 @@ Built from the official PROJ 9.9.0 release.
 - Static linkage is the default and produces `libproj.a`. `-Dlinkage=dynamic` produces `libproj.so.25.9.0` with soname `libproj.so.25`. `-Druntime=true` selects explicit runtime loading instead of linking the archive; it has no fallback and requires all 292 translated PROJ symbols. There is no `-Dsystem` mode.
 - TIFF and CURL are disabled. The package embeds neither data nor a build-host path, and ships no datum-shift grids. PROJ resolves data through `PROJ_DATA`/`PROJ_LIB` or context search paths; it cannot fetch grids over the network.
 
-## Last recorded support matrix (Zig 0.16.0)
+## Last recorded support matrix (observed with Zig 0.16.0)
 
 Compile-only targets; a successful cross-compile does not establish runtime behavior.
 
@@ -29,7 +29,7 @@ Compile-only targets; a successful cross-compile does not establish runtime beha
 | `riscv64-linux-gnu` | Recorded compile pass |
 | `wasm32-wasi` | Blocked under Zig 0.16.0 by its pinned libc++: threads and filesystem are unavailable, and `getpid` is deprecated as an error |
 
-These recorded results have not been requalified under Zig 0.17.0. The runtime loader is unavailable on WASI, Emscripten, and freestanding targets. TIFF/CURL and grid limits are build boundaries, not runtime test results.
+The matrix was not rechecked with Zig 0.17.0. The runtime loader is unavailable on WASI, Emscripten, and freestanding targets. TIFF/CURL and grid limits are build boundaries, not runtime test results.
 
 ## Consumption
 

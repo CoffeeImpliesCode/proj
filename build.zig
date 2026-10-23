@@ -752,12 +752,9 @@ const proj_db_gen_source =
     \\    defer _ = c.sqlite3_close(db);
     \\
     \\    const terminated = try arena.dupeSentinel(u8, script.items, 0);
-    \\    // sqlite3.h's `char **errmsg` translates to a `[*c][*c]u8`
-    \\    // parameter, so the caller must hand over the *address* of a `char *`
-    \\    // slot. `&slot` is a single-item pointer and does not coerce to a
-    \\    // many-item pointer, hence the explicit `@ptrCast`. A `char *` is a
-    \\    // non-optional pointer, and 0.16 rejects both `if (p)` and `p != null`
-    \\    // on one, so the null test is on its address.
+    \\    // `sqlite3.h`'s `char **errmsg` translates to `[*c][*c]u8`; pass the address
+    \\    // of a `char *` slot through `@ptrCast`. Zig 0.16 rejects null tests on this
+    \\    // non-optional pointer (observed with Zig 0.16; not rechecked on 0.17.0).
     \\    var errmsg_slot: [*:0]u8 = undefined;
     \\    const status = c.sqlite3_exec(db, terminated.ptr, null, null, @ptrCast(&errmsg_slot));
     \\    const errmsg: ?*anyopaque = if (@intFromPtr(errmsg_slot) != 0) errmsg_slot else null;

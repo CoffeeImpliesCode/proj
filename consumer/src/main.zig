@@ -32,7 +32,8 @@ fn closedForm(lon_deg: f64, lat_deg: f64) [2]f64 {
     const phi = lat_deg * radians_per_degree;
     return .{
         mercator_radius_m * lam,
-        // Zig 0.16 requires an explicit float type for this division.
+        // Observed with Zig 0.16: this division requires an explicit float type.
+        // Not rechecked with Zig 0.17.0.
         mercator_radius_m * @log(std.math.tan(std.math.pi / @as(f64, 4) + phi / 2)),
     };
 }

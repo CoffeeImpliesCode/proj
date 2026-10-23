@@ -86,9 +86,8 @@ data/file_embed/
 # package even if this file were deleted.
 .zig-cache/
 zig-out/
-# Zig 0.16 fetches dependencies into a project-local directory. This package
-# declares no dependencies, so this exists only so that a future one cannot
-# commit a fetched tree.
+# Zig 0.16 fetched dependencies here; not rechecked with Zig 0.17.0.
+# Keep the path ignored for future dependencies.
 zig-pkg/
 
 # The consumer package builds inside this repository and has its own cache and

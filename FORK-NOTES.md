@@ -7,7 +7,7 @@ Upstream files under `src/` are unmodified. Fork-owned additions:
 | `zig/root.zig` | Adds a Zig facade over translated PROJ declarations for Zig consumers. |
 | `zig/translate.h` | Collects public headers into one translation unit for the facade. |
 | `zig/proj_abi.h` | Declares C wrappers for by-value `PJ_COORD` calls to keep their ABI explicit. |
-| `zig/proj_abi.c` | Calls those upstream functions from C and exposes pointer-shaped wrappers, avoiding Zig 0.16 union-call lowering differences. |
+| `zig/proj_abi.c` | Calls those upstream functions from C and exposes pointer-shaped wrappers for Zig calls. |
 | `runtime/library.zig` | Defines and validates the provider symbol table for runtime-loaded libraries. |
 | `runtime/generate.zig` | Parses target translation to generate dispatch and patched native modules with translated C signatures. |
 | `runtime/graph.zig` | Connects generated dispatch, loader core, and translated declarations for runtime calls. |
@@ -33,8 +33,8 @@ Upstream files under `src/` are unmodified. Fork-owned additions:
 
 ## Platform boundaries
 
-- The compile matrix covers `x86_64-linux-gnu`, `aarch64-linux-gnu`, `aarch64-macos-none`, `x86_64-windows-gnu`, `riscv64-linux-gnu`, and `wasm32-wasi`.
-- On `wasm32-wasi`, the pinned libc++ lacks the required thread and filesystem APIs, and upstream's `getpid` call is a deprecation error.
+- The compile matrix was observed with Zig 0.16.0 and was not rechecked with Zig 0.17.0. It covers `x86_64-linux-gnu`, `aarch64-linux-gnu`, `aarch64-macos-none`, `x86_64-windows-gnu`, `riscv64-linux-gnu`, and `wasm32-wasi`.
+- On `wasm32-wasi`, Zig 0.16.0's pinned libc++ lacked the required thread and filesystem APIs, and upstream's `getpid` call was a deprecation error (observed with Zig 0.16; not rechecked on Zig 0.17.0).
 - Runtime loading is unavailable on WASI, Emscripten, and freestanding targets. Dynamic linkage requires a dynamic linker.
 - No datum-shift grids ship. With TIFF and CURL disabled, GeoTIFF grids and network grid retrieval are unavailable.
-- The C bridge covers linked by-value `PJ_COORD` calls. The runtime-loaded route calls provider symbols directly and retains the target-dependent Zig/C union ABI boundary.
+- The runtime-loaded route calls provider symbols directly. Its Zig/C union-call behavior was observed with Zig 0.16 and was not rechecked on Zig 0.17.0.

@@ -10,16 +10,7 @@
     // library's version is the one in the parent manifest, read out of
     // `src/proj.h:176-178`.
     .version = "0.1.0",
-    // The value Zig 0.16.0 printed for this package name and manifest. The
-    // field was deliberately absent, for the reason `lib/init/build.zig.zon:14-25`
-    // gives: it is an identifier the toolchain derives, and one written before a
-    // run would be invented. `zig build run` in this directory reported it:
-    //
-    //     build.zig.zon:4:2: error: missing top-level 'fingerprint' field;
-    //     suggested value: 0xc08ab5c3397a7a1f
-    //
-    // The value a driver reads out of that run belongs in the manifest it is
-    // for, and the comment that used to say otherwise is superseded by it.
+    // Zig 0.16.0 printed this fingerprint; it was not rechecked with Zig 0.17.0.
     .fingerprint = 0xc08ab5c3397a7a1f,
     .minimum_zig_version = "0.17.0",
     .dependencies = .{
