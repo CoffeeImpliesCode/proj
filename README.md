@@ -16,7 +16,7 @@ Built from the official PROJ 9.9.0 release.
 - Static linkage is the default and produces `libproj.a`. `-Dlinkage=dynamic` produces `libproj.so.25.9.0` with soname `libproj.so.25`. `-Druntime=true` selects explicit runtime loading instead of linking the archive; it has no fallback and requires all 292 translated PROJ symbols. There is no `-Dsystem` mode.
 - TIFF and CURL are disabled. The package embeds neither data nor a build-host path, and ships no datum-shift grids. PROJ resolves data through `PROJ_DATA`/`PROJ_LIB` or context search paths; it cannot fetch grids over the network.
 
-## Support matrix
+## Last recorded support matrix (Zig 0.16.0)
 
 Compile-only targets; a successful cross-compile does not establish runtime behavior.
 
@@ -27,9 +27,9 @@ Compile-only targets; a successful cross-compile does not establish runtime beha
 | `aarch64-macos-none` | Recorded compile pass |
 | `x86_64-windows-gnu` | Recorded compile pass |
 | `riscv64-linux-gnu` | Recorded compile pass |
-| `wasm32-wasi` | Blocked by the pinned Zig 0.16 libc++: threads and filesystem are unavailable, and `getpid` is deprecated as an error |
+| `wasm32-wasi` | Blocked under Zig 0.16.0 by its pinned libc++: threads and filesystem are unavailable, and `getpid` is deprecated as an error |
 
-The runtime loader is unavailable on WASI, Emscripten, and freestanding targets. TIFF/CURL and grid limits are build boundaries, not runtime test results.
+These recorded results have not been requalified under Zig 0.17.0. The runtime loader is unavailable on WASI, Emscripten, and freestanding targets. TIFF/CURL and grid limits are build boundaries, not runtime test results.
 
 ## Consumption
 
@@ -52,6 +52,6 @@ const proj = proj_dep.module("proj");
 const proj_library = proj_dep.artifact("proj");
 ```
 
-The module and artifact name are both `proj`; the module re-exports the raw translated C namespace as `proj.c`. The C namespace is not registered as a separate package module. Options are `linkage` (`std.builtin.LinkMode`, default `.static`) and `runtime` (`bool`, default `false`).
+The module and artifact name are both `proj`; the module re-exports the raw translated C namespace as `proj.c`. The C namespace is not registered as a separate package module. Options are `linkage` (`std.lang.LinkMode`, default `.static`) and `runtime` (`bool`, default `false`).
 
 For C consumers, the installed headers are `proj.h`, `proj_constants.h`, `proj_experimental.h`, `proj_symbol_rename.h`, and the headers under `include/proj/`; link with `-lproj`.

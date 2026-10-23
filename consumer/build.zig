@@ -12,7 +12,7 @@ pub fn build(b: *std.Build) void {
 
     // Forward linkage/runtime options with defaults aligned to the dependency.
     const linkage = b.option(
-        std.builtin.LinkMode,
+        std.lang.LinkMode,
         "linkage",
         "Forwarded to the library: which native artifact it delivers. The " ++
             "default is the library's own default, a static archive.",
@@ -48,14 +48,14 @@ pub fn build(b: *std.Build) void {
     const run_exe = b.addRunArtifact(exe);
     run_exe.has_side_effects = true;
 
-    // Set `PROJ_DATA` to the dependency's installed database directory.
-    // Wait for its install step before running the consumer.
+    // Run from the dependency's installed data directory.
     const dep_builder = dep.builder;
     run_exe.step.dependOn(dep_builder.getInstallStep());
-    run_exe.setEnvironmentVariable("PROJ_DATA", dep_builder.getInstallPath(.prefix, "share/proj"));
+    run_exe.setCwd(.{ .relative = .{ .base = .install_prefix, .sub_path = "share/proj" } });
+    run_exe.setEnvironmentVariable("PROJ_DATA", ".");
     // Disable networking so results do not depend on external grids.
     run_exe.setEnvironmentVariable("PROJ_NETWORK", "OFF");
-    if (b.args) |args| run_exe.addArgs(args);
+    run_exe.addPassthruArgs();
     const run_step = b.step("run", "Build and run the consumer program");
     run_step.dependOn(&run_exe.step);
 }

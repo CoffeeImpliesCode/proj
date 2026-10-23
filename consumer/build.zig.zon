@@ -21,7 +21,7 @@
     // The value a driver reads out of that run belongs in the manifest it is
     // for, and the comment that used to say otherwise is superseded by it.
     .fingerprint = 0xc08ab5c3397a7a1f,
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     .dependencies = .{
         // A relative path, not a registry or archive URL. This package is the proof
         // that `dep.module("proj")` works from outside the package that defines it;

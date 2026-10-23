@@ -82,7 +82,7 @@ fn openDatabase() Setup!proj.Context {
     };
     defer std.testing.allocator.free(raw_data);
     // Convert the environment slice to the sentinel-terminated C string required by PROJ.
-    const data: [:0]const u8 = try std.testing.allocator.dupeZ(u8, raw_data);
+    const data: [:0]const u8 = try std.testing.allocator.dupeSentinel(u8, raw_data, 0);
     defer std.testing.allocator.free(data);
     if (data.len == 0) {
         std.debug.print("\n{s} is empty; there is no database directory to open.\n", .{data_variable});

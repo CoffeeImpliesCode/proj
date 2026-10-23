@@ -306,9 +306,9 @@ fn makeCoord(x: f64, y: f64, z: f64, t: f64) Coord {
 }
 
 fn transformCoord(P: ?*c.PJ, direction: Direction, point: Coord) Coord {
-    if (comptime runtime_loaded) return c.proj_trans(P, @intFromEnum(direction), point);
+    if (comptime runtime_loaded) return c.proj_trans(P, @backingInt(direction), point);
     var out: Coord = undefined;
-    c_abi.proj_abi_trans(P, @intFromEnum(direction), &point, &out);
+    c_abi.proj_abi_trans(P, @backingInt(direction), &point, &out);
     return out;
 }
 
@@ -335,8 +335,8 @@ fn pointFactors(P: ?*c.PJ, lp: Coord) Factors {
 }
 
 fn suggestionIndex(ctx: ?*c.PJ_CONTEXT, operations: ?*c.PJ_OBJ_LIST, direction: Direction, point: Coord) c_int {
-    if (comptime runtime_loaded) return c.proj_get_suggested_operation(ctx, operations, @intFromEnum(direction), point);
-    return c_abi.proj_abi_get_suggested_operation(ctx, operations, @intFromEnum(direction), &point);
+    if (comptime runtime_loaded) return c.proj_get_suggested_operation(ctx, operations, @backingInt(direction), point);
+    return c_abi.proj_abi_get_suggested_operation(ctx, operations, @backingInt(direction), &point);
 }
 
 /// Library version and search paths; strings borrow from process-lifetime storage and may be null.
@@ -608,7 +608,7 @@ pub const Context = struct {
             self.ptr,
             auth_name,
             code,
-            @intFromEnum(category),
+            @backingInt(category),
             if (use_proj_alternative_grid_names) 1 else 0,
             options,
         ));
@@ -746,14 +746,14 @@ pub const Context = struct {
         return StringList.create(c.proj_get_codes_from_database(
             self.ptr,
             if (auth_name) |name| name else null,
-            @intFromEnum(kind),
+            @backingInt(kind),
             if (allow_deprecated) 1 else 0,
         ));
     }
 
     /// Guess a WKT dialect without parsing; `not_wkt` is a normal result.
     pub fn guessWktDialect(self: Context, wkt: [*:0]const u8) GuessedDialect {
-        return @enumFromInt(c.proj_context_guess_wkt_dialect(self.ptr, wkt));
+        return @fromBackingInt(@intCast(c.proj_context_guess_wkt_dialect(self.ptr, wkt)));
     }
 
     /// Return the context error code; zero means no current error, not no past errors.
@@ -768,7 +768,7 @@ pub const Context = struct {
 
     /// Set the log level and return its previous value.
     pub fn logLevel(self: Context, log_level: LogLevel) LogLevel {
-        return @enumFromInt(c.proj_log_level(self.ptr, @intFromEnum(log_level)));
+        return @fromBackingInt(@intCast(c.proj_log_level(self.ptr, @backingInt(log_level))));
     }
 
     /// Set the logging callback; null restores PROJ logging, and `app_data` is passed through.
@@ -811,7 +811,7 @@ pub const Object = struct {
 
     /// What kind of object this is — `proj_get_type` (`src/proj.h:1234`).
     pub fn getType(self: Object) Type {
-        return @enumFromInt(c.proj_get_type(self.ptr));
+        return @fromBackingInt(@intCast(c.proj_get_type(self.ptr)));
     }
 
     /// Whether it is a CRS — `proj_is_crs` (`src/proj.h:1247`).
@@ -826,7 +826,7 @@ pub const Object = struct {
 
     /// Whether two objects are equivalent under the selected criterion.
     pub fn isEquivalentTo(self: Object, other: Object, criterion: ComparisonCriterion) bool {
-        return isSet(c.proj_is_equivalent_to(self.ptr, other.ptr, @intFromEnum(criterion)));
+        return isSet(c.proj_is_equivalent_to(self.ptr, other.ptr, @backingInt(criterion)));
     }
 
     /// Return the object name as a borrow, or null when unavailable.
@@ -889,7 +889,7 @@ pub const Object = struct {
         kind: WktType,
         options: [*c]const ?[*:0]const u8,
     ) ?[:0]const u8 {
-        return maybeSpan(c.proj_as_wkt(self.ctx, self.ptr, @intFromEnum(kind), options));
+        return maybeSpan(c.proj_as_wkt(self.ctx, self.ptr, @backingInt(kind), options));
     }
 
     /// Export a PROJ string as a short-lived borrow; do not free it.
@@ -899,7 +899,7 @@ pub const Object = struct {
         kind: ProjStringType,
         options: [*c]const ?[*:0]const u8,
     ) ?[:0]const u8 {
-        return maybeSpan(c.proj_as_proj_string(self.ctx, self.ptr, @intFromEnum(kind), options));
+        return maybeSpan(c.proj_as_proj_string(self.ctx, self.ptr, @backingInt(kind), options));
     }
 
     /// Export PROJJSON as a short-lived borrow; do not free it.
@@ -1089,7 +1089,7 @@ pub const Object = struct {
 
     /// Return the coordinate-system type.
     pub fn csType(self: Object) CoordinateSystemType {
-        return @enumFromInt(c.proj_cs_get_type(self.ctx, self.ptr));
+        return @fromBackingInt(@intCast(c.proj_cs_get_type(self.ctx, self.ptr)));
     }
 
     /// Return the number of coordinate-system axes.
@@ -1147,7 +1147,7 @@ pub const Object = struct {
     /// Transform coordinates in place; failed points become error coordinates.
     /// Return zero or a shared ErrorCode, using the generic transform code when needed.
     pub fn transArray(self: Object, direction: Direction, coords: []Coord) c_int {
-        return c.proj_trans_array(self.ptr, @intFromEnum(direction), coords.len, coords.ptr);
+        return c.proj_trans_array(self.ptr, @backingInt(direction), coords.len, coords.ptr);
     }
 
     /// Transform strided columns in place; strides are bytes, and length one broadcasts.
@@ -1170,7 +1170,7 @@ pub const Object = struct {
     ) usize {
         return c.proj_trans_generic(
             self.ptr,
-            @intFromEnum(direction),
+            @backingInt(direction),
             x,
             sx,
             nx,
@@ -1201,7 +1201,7 @@ pub const Object = struct {
         if (!isSet(c.proj_trans_bounds(
             self.ctx,
             self.ptr,
-            @intFromEnum(direction),
+            @backingInt(direction),
             input.xmin,
             input.ymin,
             input.xmax,
@@ -1222,27 +1222,27 @@ pub const Object = struct {
 
     /// Whether the input is angular in this direction.
     pub fn angularInput(self: Object, direction: Direction) bool {
-        return isSet(c.proj_angular_input(self.ptr, @intFromEnum(direction)));
+        return isSet(c.proj_angular_input(self.ptr, @backingInt(direction)));
     }
 
     /// Whether the output is angular in this direction.
     pub fn angularOutput(self: Object, direction: Direction) bool {
-        return isSet(c.proj_angular_output(self.ptr, @intFromEnum(direction)));
+        return isSet(c.proj_angular_output(self.ptr, @backingInt(direction)));
     }
 
     /// Whether the input is in degrees.
     pub fn degreeInput(self: Object, direction: Direction) bool {
-        return isSet(c.proj_degree_input(self.ptr, @intFromEnum(direction)));
+        return isSet(c.proj_degree_input(self.ptr, @backingInt(direction)));
     }
 
     /// Whether the output is in degrees.
     pub fn degreeOutput(self: Object, direction: Direction) bool {
-        return isSet(c.proj_degree_output(self.ptr, @intFromEnum(direction)));
+        return isSet(c.proj_degree_output(self.ptr, @backingInt(direction)));
     }
 
     /// Measure forward/inverse consistency, not accuracy; units follow the coordinates.
     pub fn roundtrip(self: Object, direction: Direction, n: c_int, coords: []Coord) f64 {
-        return c.proj_roundtrip(self.ptr, @intFromEnum(direction), n, coords.ptr);
+        return c.proj_roundtrip(self.ptr, @backingInt(direction), n, coords.ptr);
     }
 
     /// Return geodesic distance; HUGE_VAL means the operation has no ellipsoid.
@@ -1494,7 +1494,7 @@ pub const OperationFactory = struct {
         c.proj_operation_factory_context_set_spatial_criterion(
             self.ctx,
             self.ptr,
-            @intFromEnum(criterion),
+            @backingInt(criterion),
         );
     }
 
@@ -1503,7 +1503,7 @@ pub const OperationFactory = struct {
         c.proj_operation_factory_context_set_grid_availability_use(
             self.ctx,
             self.ptr,
-            @intFromEnum(use),
+            @backingInt(use),
         );
     }
 
@@ -1512,7 +1512,7 @@ pub const OperationFactory = struct {
         c.proj_operation_factory_context_set_allow_use_intermediate_crs(
             self.ctx,
             self.ptr,
-            @intFromEnum(use),
+            @backingInt(use),
         );
     }
 

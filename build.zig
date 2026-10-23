@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Fork-authored build logic; see `FORK-LICENSE.md` for scope.
 
-//! Zig 0.16 build graph for PROJ 9.9.0.
+//! Zig 0.17.0 build graph for PROJ 9.9.0.
 //! Generated inputs are produced by this graph.
 
 const std = @import("std");
@@ -751,7 +751,7 @@ const proj_db_gen_source =
     \\    };
     \\    defer _ = c.sqlite3_close(db);
     \\
-    \\    const terminated = try arena.dupeZ(u8, script.items);
+    \\    const terminated = try arena.dupeSentinel(u8, script.items, 0);
     \\    // sqlite3.h's `char **errmsg` translates to a `[*c][*c]u8`
     \\    // parameter, so the caller must hand over the *address* of a `char *`
     \\    // slot. `&slot` is a single-item pointer and does not coerce to a
@@ -889,7 +889,7 @@ fn linkSystemDependencies(module: *std.Build.Module, target: std.Build.ResolvedT
 
 fn targetCanCarry(
     target: std.Build.ResolvedTarget,
-    requested: std.builtin.LinkMode,
+    requested: std.lang.LinkMode,
 ) bool {
     return requested == .static or
         target.result.os.tag == .windows or
@@ -907,7 +907,7 @@ fn unsupportedLinkageReason(b: *std.Build, target: std.Build.ResolvedTarget) []c
 fn requireSupportedLinkage(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
-    requested: std.builtin.LinkMode,
+    requested: std.lang.LinkMode,
 ) void {
     if (!targetCanCarry(target, requested)) {
         @panic(unsupportedLinkageReason(b, target));
@@ -946,7 +946,7 @@ fn addHostProgram(
         .root_module = b.createModule(.{
             .root_source_file = root,
             .target = b.graph.host,
-            .optimize = .ReleaseSafe,
+            .optimize = .safe,
             .link_libc = true,
         }),
     });
@@ -964,7 +964,7 @@ fn addProjConfig(b: *std.Build, target: std.Build.ResolvedTarget) Generated {
     run.addArg(b.fmt("--have-libdl={d}", .{@intFromBool(facts.have_libdl)}));
     run.addArg(b.fmt("--have-localeconv={d}", .{@intFromBool(facts.have_localeconv)}));
     run.addArg(b.fmt("--have-strerror={d}", .{@intFromBool(facts.have_strerror)}));
-    const header = run.addPrefixedOutputFileArg("--out=", "proj_config.h");
+    const header = run.addOutputFileArg2("proj_config.h", .{ .prefix = "--out=" });
 
     return .{
         .header = header,
@@ -983,7 +983,7 @@ fn addProjDb(b: *std.Build) ProjectDatabase {
     const translate = b.addTranslateC(.{
         .root_source_file = b.addWriteFiles().add("proj_sqlite_translate.h", sqlite_translate_header_source),
         .target = b.graph.host,
-        .optimize = .ReleaseSafe,
+        .optimize = .safe,
         .link_libc = true,
     });
     // Translate against the vendored SQLite header.
@@ -993,7 +993,7 @@ fn addProjDb(b: *std.Build) ProjectDatabase {
     const module = b.createModule(.{
         .root_source_file = files.add("proj-db-gen.zig", proj_db_gen_source),
         .target = b.graph.host,
-        .optimize = .ReleaseSafe,
+        .optimize = .safe,
         .link_libc = true,
     });
     module.addImport("c", translate.createModule());
@@ -1010,10 +1010,10 @@ fn addProjDb(b: *std.Build) ProjectDatabase {
     run.has_side_effects = true;
 
     run.addArg(b.fmt("--version={s}", .{upstream_version_text}));
-    run.addPrefixedFileArg("--expected-md5-file=", b.path(expected_md5_file));
-    for (sql_files) |file| run.addPrefixedFileArg("--in=", b.path(file));
-    const md5_header = run.addPrefixedOutputFileArg("--md5-header=", "PROJ_DB_SQL_MD5.h");
-    const db = run.addPrefixedOutputFileArg("--db=", "proj.db");
+    run.addFileArg2(b.path(expected_md5_file), .{ .prefix = "--expected-md5-file=" });
+    for (sql_files) |file| run.addFileArg2(b.path(file), .{ .prefix = "--in=" });
+    const md5_header = run.addOutputFileArg2("PROJ_DB_SQL_MD5.h", .{ .prefix = "--md5-header=" });
+    const db = run.addOutputFileArg2("proj.db", .{ .prefix = "--db=" });
 
     return .{ .db = db, .md5_header = md5_header, .dir = md5_header.dirname() };
 }
@@ -1031,8 +1031,8 @@ const Graph = struct {
 fn addCLibrary(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
-    linkage: std.builtin.LinkMode,
+    optimize: std.lang.Optimize,
+    linkage: std.lang.LinkMode,
     config: Generated,
     project_db: ProjectDatabase,
     name: []const u8,
@@ -1096,8 +1096,8 @@ fn addCLibrary(
 fn addGraph(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
-    linkage: std.builtin.LinkMode,
+    optimize: std.lang.Optimize,
+    linkage: std.lang.LinkMode,
     runtime_loaded: bool,
     public: bool,
     project_db: ProjectDatabase,
@@ -1177,7 +1177,7 @@ fn addGraph(
 fn facadeProgram(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
     facade: *std.Build.Module,
     source: []const u8,
 ) *std.Build.Module {
@@ -1196,7 +1196,7 @@ fn facadeProgram(
 fn addExercise(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
     graph: Graph,
     runtime_loaded: bool,
     name: []const u8,
@@ -1274,27 +1274,23 @@ fn addPkgConfig(b: *std.Build, target: std.Build.ResolvedTarget) void {
 }
 
 /// Install generated `proj.db` and datum data under `share/proj`.
-/// Run steps depend on this installation before using `PROJ_DATA`.
+/// Run steps depend on this directory before using `PROJ_DATA`.
 fn addDataDirectory(
     b: *std.Build,
     project_db: ProjectDatabase,
-) *std.Build.Step.InstallFile {
-    const install = b.addInstallFileWithDir(
-        project_db.db,
-        .prefix,
-        "share/proj/proj.db",
-    );
-    b.getInstallStep().dependOn(&install.step);
-
+) *std.Build.Step.InstallDir {
+    const files = b.addWriteFiles();
+    _ = files.addCopyFile(project_db.db, "proj.db");
     for (data_files) |file| {
-        const step = b.addInstallFileWithDir(
-            b.path(file),
-            .prefix,
-            b.pathJoin(&.{ "share", "proj", std.fs.path.basename(file) }),
-        );
-        b.getInstallStep().dependOn(&step.step);
+        _ = files.addCopyFile(b.path(file), std.fs.path.basename(file));
     }
 
+    const install = b.addInstallDirectory(.{
+        .source_dir = files.getDirectory(),
+        .install_dir = .prefix,
+        .install_subdir = "share/proj",
+    });
+    b.getInstallStep().dependOn(&install.step);
     return install;
 }
 
@@ -1311,11 +1307,11 @@ fn installRecords(b: *std.Build) void {
 
 // Run steps.
 
-/// Set the installed data path and disable network access for run steps.
-/// Do not redirect the user's writable-data directory.
-fn applyProjEnvironment(run: *std.Build.Step.Run, data_install: *std.Build.Step, b: *std.Build) void {
+/// Run from the installed data directory and disable network access.
+fn applyProjEnvironment(run: *std.Build.Step.Run, data_install: *std.Build.Step) void {
     run.step.dependOn(data_install);
-    run.setEnvironmentVariable("PROJ_DATA", b.getInstallPath(.prefix, "share/proj"));
+    run.setCwd(.{ .relative = .{ .base = .install_prefix, .sub_path = "share/proj" } });
+    run.setEnvironmentVariable("PROJ_DATA", ".");
     run.setEnvironmentVariable("PROJ_NETWORK", "OFF");
 }
 
@@ -1325,8 +1321,8 @@ fn addTargetCheck(
     b: *std.Build,
     step: *std.Build.Step,
     query: std.Target.Query,
-    optimize: std.builtin.OptimizeMode,
-    linkage: std.builtin.LinkMode,
+    optimize: std.lang.Optimize,
+    linkage: std.lang.LinkMode,
     runtime_loaded: bool,
     project_db: ProjectDatabase,
 ) void {
@@ -1387,7 +1383,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const linkage = b.option(
-        std.builtin.LinkMode,
+        std.lang.LinkMode,
         "linkage",
         "Deliver the native library as a static archive (the default) or as a " ++
             "real shared object. The compiled C and C++, the generated headers, " ++
@@ -1431,8 +1427,8 @@ pub fn build(b: *std.Build) void {
     });
     const run_example = b.addRunArtifact(example);
     run_example.has_side_effects = true;
-    applyProjEnvironment(run_example, &data_install.step, b);
-    if (b.args) |args| run_example.addArgs(args);
+    applyProjEnvironment(run_example, &data_install.step);
+    run_example.addPassthruArgs();
     b.step("smoke", "Run the example program against the generated datum data").dependOn(&run_example.step);
 
     const consumer = b.addExecutable(.{
@@ -1441,9 +1437,9 @@ pub fn build(b: *std.Build) void {
     });
     const run_consumer = b.addRunArtifact(consumer);
     run_consumer.has_side_effects = true;
-    applyProjEnvironment(run_consumer, &data_install.step, b);
+    applyProjEnvironment(run_consumer, &data_install.step);
     // Forward provider arguments to the runtime-loaded consumer.
-    if (b.args) |args| run_consumer.addArgs(args);
+    run_consumer.addPassthruArgs();
     b.step("consumer", "Run the module consumer").dependOn(&run_consumer.step);
 
     const unit_tests = b.addTest(.{
@@ -1452,7 +1448,7 @@ pub fn build(b: *std.Build) void {
     });
     const run_tests = b.addRunArtifact(unit_tests);
     run_tests.has_side_effects = true;
-    applyProjEnvironment(run_tests, &data_install.step, b);
+    applyProjEnvironment(run_tests, &data_install.step);
     const test_step = b.step("test", "Run the facade tests and every API operation");
     test_step.dependOn(&run_tests.step);
 
@@ -1497,9 +1493,9 @@ pub fn build(b: *std.Build) void {
         );
     }
     std.debug.print(
-        "proj: datum data is {d} generated SQL files plus proj.db, installed to {s}; " ++
-            "PROJ_DATA names it and PROJ_NETWORK=OFF on every run step\n",
-        .{ sql_files.len, b.getInstallPath(.prefix, "share/proj") },
+        "proj: datum data is {d} generated SQL files plus proj.db under share/proj; " ++
+            "run steps use PROJ_DATA=. and PROJ_NETWORK=OFF\n",
+        .{sql_files.len},
     );
     if (runtime_loaded) {
         std.debug.print(

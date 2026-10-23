@@ -6,7 +6,7 @@
 
 let
   # Use one Zig version for the assertion and package list.
-  zig = pkgs.zig_0_16;
+  zig = pkgs.zig_0_17;
 
   proj = linkage: pkgs.callPackage ./package.nix { inherit linkage; };
 
@@ -73,8 +73,8 @@ in
 
   assertions = [
     {
-      assertion = zig.version == "0.16.0";
-      message = "The PROJ SDK requires Zig 0.16.0; nixpkgs resolved zig_0_16 to ${zig.version}";
+      assertion = zig.version == "0.17.0";
+      message = "The PROJ SDK requires Zig 0.17.0; nixpkgs resolved zig_0_17 to ${zig.version}";
     }
   ];
 

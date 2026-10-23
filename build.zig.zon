@@ -5,7 +5,7 @@
     .fingerprint = 0x520c3c90ca08256e,
     // Upstream PROJ release; the build checks this against its headers.
     .version = "9.9.0",
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     // SQLite is vendored; this package fetches no dependencies.
     .dependencies = .{},
     .paths = .{

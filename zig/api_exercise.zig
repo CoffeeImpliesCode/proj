@@ -165,7 +165,7 @@ fn contextAndObjects() Failure!void {
 
     // Setting the log level returns the previous value.
     const previous = ctx.logLevel(.none);
-    try expect(@intFromEnum(ctx.logLevel(previous)) == @intFromEnum(previous));
+    try expect(@backingInt(ctx.logLevel(previous)) == @backingInt(previous));
     ctx.logFunc(null, null);
 
     if (try refusalOrSuccess(ctx.createFromProjString(plain_mercator))) |object| {
@@ -241,7 +241,7 @@ fn errnoQuartet(op: proj.Object) Failure!void {
 
 fn objectIdentity(ctx: proj.Context, object: proj.Object) Failure!void {
     const kind = object.getType();
-    try expect(@intFromEnum(kind) >= 0);
+    try expect(@backingInt(kind) >= 0);
     _ = object.isCrs();
     _ = object.isDeprecated();
     _ = object.isEquivalentTo(object, .strict);

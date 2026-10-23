@@ -1,5 +1,7 @@
 # Changelog
 
+- Port to Zig 0.17.0.
+- Restored the WKT argument in `Context.guessWktDialect`.
 - Added a C ABI bridge for by-value `PJ_COORD` calls used by the typed facade.
 - Added `Object.datumForced()` for CRS datum ensembles.
 - Made `Object.name()` handle PROJ's documented null result.

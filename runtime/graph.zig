@@ -29,7 +29,7 @@ const provider_excluded = "";
 pub fn createCoreModule(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
 ) *std.Build.Module {
     return b.createModule(.{
         .root_source_file = b.path("runtime/loader.zig"),
@@ -46,7 +46,7 @@ pub fn createModule(
     b: *std.Build,
     translate: TranslateModule,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
 ) *std.Build.Module {
     const core = createCoreModule(b, target, optimize);
 
@@ -70,7 +70,7 @@ fn createDispatchModule(
     b: *std.Build,
     translate: TranslateModule,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
     core: *std.Build.Module,
     library: *std.Build.Module,
 ) *std.Build.Module {
@@ -117,7 +117,7 @@ fn generateDispatch(
         .root_module = b.createModule(.{
             .root_source_file = b.path("runtime/generate.zig"),
             .target = b.graph.host,
-            .optimize = .Debug,
+            .optimize = .debug,
         }),
     });
 

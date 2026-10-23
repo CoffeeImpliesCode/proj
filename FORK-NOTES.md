@@ -27,11 +27,14 @@ Upstream files under `src/` are unmodified. Fork-owned additions:
 - Static linkage is the default; dynamic linkage requires a target dynamic linker. Runtime loading is a separate route and requires an explicit provider load.
 - `check` compiles its target matrix without running tests. The `test`, `smoke`, and `consumer` steps handle runtime execution or consumption separately.
 - `TIFF_ENABLED`, `CURL_ENABLED`, and `EMBED_RESOURCE_FILES` are disabled. The build installs `proj.db` as data rather than embedding it in the library.
+- Run steps use the install-prefix `LazyPath` as their working directory; `PROJ_DATA=.` avoids configure-time prefix lookup.
+- Zig 0.17 sentinel copies use `Allocator.dupeSentinel` with sentinel `0` in the database generator and tests.
+- Zig 0.17 enum conversions use `@backingInt` and `@fromBackingInt(@intCast(...))` in the facade and loader.
 
 ## Platform boundaries
 
 - The compile matrix covers `x86_64-linux-gnu`, `aarch64-linux-gnu`, `aarch64-macos-none`, `x86_64-windows-gnu`, `riscv64-linux-gnu`, and `wasm32-wasi`.
-- `wasm32-wasi` is blocked by the pinned Zig 0.16 libc++: it lacks the required thread and filesystem APIs, and upstream's `getpid` call is a deprecation error.
+- On `wasm32-wasi`, the pinned libc++ lacks the required thread and filesystem APIs, and upstream's `getpid` call is a deprecation error.
 - Runtime loading is unavailable on WASI, Emscripten, and freestanding targets. Dynamic linkage requires a dynamic linker.
 - No datum-shift grids ship. With TIFF and CURL disabled, GeoTIFF grids and network grid retrieval are unavailable.
 - The C bridge covers linked by-value `PJ_COORD` calls. The runtime-loaded route calls provider symbols directly and retains the target-dependent Zig/C union ABI boundary.
