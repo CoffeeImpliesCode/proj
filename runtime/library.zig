@@ -3,350 +3,22 @@
 // Fork-authored. `FORK-LICENSE.md` records the owner's authorization of that
 // grant for this file, and `../COPYING` holds upstream's own MIT-style text.
 
-//! PROJ's side of the runtime loader: the names its synchronization binding
-//! has, what it requires of a provider beyond resolving its symbols, and what
-//! the external ABI boundary for this provider actually is.
-//!
-//! Everything else about the runtime route is generic. `runtime/loader.zig` is
-//! the state machine and the platform layer; `runtime/generate.zig` builds the
-//! dispatch from whatever the translation step actually produced;
-//! `runtime/graph.zig` wires them together. This file is what makes them PROJ's,
-//! and it is the file another SDK replaces.
-//!
-//! ## What a provider must be
-//!
-//! **All 292 `proj_*` functions that `src/proj.h` declares, every one of them,
-//! all required.** Not 284: see "How the count was established" below, where the
-//! difference is worked out name by name. A provider that exports fewer is
-//! refused with `MissingSymbol` before anything is published, and there is no
-//! optional entry point, because the header has no conditional entry point.
-//!
-//! The header declares no exported data object, so all 292 are
-//! `rt.SymbolKind.function` and this package has no accessor. No other
-//! `proj_`-prefixed name in `src/proj.h` is an entry point: the only ones a scan
-//! for `proj_[a-z0-9_]+` finds that are *not* followed by `(` are
-//! `proj_file_finder`, a callback typedef (`:409`), the four
-//! `proj_network_*_type` callback typedefs (`:516`, `:522`, `:527`, `:544`) and
-//! `proj_short_name`, a member of `PROJ_UNIT_INFO` (`:1142`). The remaining two
-//! matches, `proj_api` and `proj_symbol_rename`, occur only inside comments and
-//! inside the `#include` line at `:128`. The opaque handle types - `PJ_CONTEXT`
-//! (`:386-387`), `PJ_AREA` (`:203-204`), `PJ_OBJ_LIST` (`:1183`) - are spelled in
-//! upper case and are types as well, so the translation step re-exports every one
-//! of these as a Zig declaration rather than resolving it as a symbol.
-//!
-//! `src/proj_experimental.h` is **not** in this set and does not need to be: at
-//! this pin its entire body after `#include "proj.h"` is the doc comment
-//! "Experimental C API (none currently)" (`src/proj_experimental.h:38-46`)
-//! followed by an `extern "C" { }` with nothing between it (`:48-50`). It
-//! declares no function, so including it would add one include edge and no name.
-//!
-//! ### How the count was established
-//!
-//! Read out of `src/proj.h` at this pin, not taken on trust, with two commands
-//! and one subtraction. The lower-case recipe
-//! `grep -oE '\bproj_[a-z0-9_]+\s*\(' src/proj.h | sort -u` answers **284**,
-//! and that answer is wrong in both directions:
-//!
-//!   * it **loses nine** names, because nine declarations contain an uppercase
-//!     letter that `[a-z0-9_]` cannot match, and the character before their `(`
-//!     is then not part of any match: `proj_create_cartesian_2D_cs` (`:1673`),
-//!     `proj_create_ellipsoidal_2D_cs` (`:1678`),
-//!     `proj_create_ellipsoidal_3D_cs` (`:1684`),
-//!     `proj_create_linear_3D_affine_parametric_conversion` (`:1805`),
-//!     `proj_crs_create_bound_crs_to_WGS84` (`:1852`),
-//!     `proj_crs_create_projected_3D_crs_from_2D` (`:1754`),
-//!     `proj_crs_demote_to_2D` (`:1758`), `proj_crs_promote_to_3D` (`:1750`)
-//!     and `proj_trans_bounds_3D` (`:644`);
-//!   * it **adds one** that the header never declares:
-!     `proj_get_crs_list` appears only inside a Doxygen comment at
-//!     `src/proj.h:1077`, and the function itself is not declared in this
-//!     header at this pin.
-//!
-//! Widening the character class to `[A-Za-z0-9_]` answers **293**: the nine
-//! uppercase names come back and the one comment-only mention is still there, so
-//! 293 - 1 mention = **292 declarations**. Every occurrence was then checked to
-//! be a declaration and not a mention: the 292 names below are the ones that
-//! appear at a declarator, and the whole list is reproduced in
-//! `const header_symbols` with the line each one is declared on, so any reader
-//! can audit a name against the header without rerunning anything.
-//!
-//! ### The count is checked at compile time, not asserted in prose
-//!
-//! `Config` below compares the generated dispatch's routed `symbols` against
-//! `header_symbols` in a `comptime` block, as sets rather than positionally
-//! (the dispatch's order is the translation's declaration order, which is not
-//! sorted). Three failures are named: a count mismatch, a routed name the header
-//! does not declare, and a header name the dispatch does not route - plus a
-//! routed symbol that is not a function. That is what makes "no more, no fewer"
-//! a fact about every configuration this package builds rather than a claim
-//! about this one: if a target's translation ever produced a different set, the
-//! build stops with the offending name in the message instead of routing it.
-//!
-//! ### What `optional_symbols` is, and why it is empty
-//!
-//! It is written out as empty, in code as well as in this paragraph:
-//! `Config` below asserts `optional_symbols.len == 0` at compile time. Every
-//! declaration in `src/proj.h` is unconditional at this pin. The header's
-//! complete set of conditionals is: the include guard (`:118-119`, `:2318`), the
-//! `ACCEPT_USE_OF_DEPRECATED_PROJ_API_H` opt-out (`:123-125`), the
-//! `PROJ_RENAME_SYMBOLS` include (`:127-129`), the C++ `extern "C"` opening
-//! (`:131-133`), the `PJ_DEFAULT_CTX` macro (`:399-403`), and `PROJ_DEPRECATED`
-//! choosing among four spellings of the same attribute (`:157-173`). Four
-//! declarations go through `PROJ_DEPRECATED` - `proj_errno_string` (`:775`),
-//! `proj_list_units` (`:795`), `proj_list_angular_units` (`:797`) and
-//! `proj_rtodms` (`:811`) - and every branch of that macro still declares the
-//! function; only the attribute changes. A name that were optional would be
-//! routed into a nullable table field and its wrapper would stop the program by
-//! name when the provider lacks it, which for this header can only ever be a way
-//! of deferring an error that is better reported at load time.
-//!
-//! ### `provider_excluded`, and what the include closure actually contains
-//!
-//! `provider_excluded` in `runtime/graph.zig` is **empty**, and so is
-//! `libc_noise` beside it. Neither is an omission; both are a reading of the
-//! header.
-//!
-//! The translated unit is `zig/translate.h`, and its whole body is two includes:
-//! `<proj.h>` and `<proj_constants.h>`. Of the upstream headers those reach:
-//!
-//!   * `src/proj.h:121` includes `<stddef.h>`, "For size_t". `<stddef.h>`
-//!     declares types and macros - `size_t`, `ptrdiff_t`, `NULL`, `offsetof`,
-//!     `max_align_t` - and **no function at all**. So the C library contributes
-//!     zero `extern` declarations to this translation, zero names to classify,
-//!     and zero names that could be misrouted. This is the one header in this
-//!     package whose translated closure is empty, and it is empty for a reason
-//!     the header states in a comment on the include line.
-//!   * `src/proj.h:127-129` includes `proj_symbol_rename.h` **only** under
-//!     `PROJ_RENAME_SYMBOLS`, which neither delivery defines (the build puts
-//!     `-DPROJ_DLL=` on the compile line for a static build and never defines
-//!     `PROJ_RENAME_SYMBOLS`), so at this build the exported names are upstream's
-//!     own `proj_*` names. See "The `PROJ_RENAME_SYMBOLS` family" below for what
-//!     that means for a provider built the other way.
-//!   * `src/proj_constants.h` is 520 `#define`s and nothing else: no function, no
-//!     declaration, no type. The translation step evaluates it into Zig `pub
-//!     const` declarations that the generator re-exports, so `EPSG_*` and the
-//!     rest are available to a facade without one of them being an `extern`.
-//!
-//! PROJ's own compiled sources include `<math.h>`, `<stdio.h>`, `<string.h>` and
-//! more, but the library is a separate translation unit and a declaration
-//! reaches the dispatch only if a header this build translates declares it.
-//!
-//! ## The ABI boundary, stated honestly
-//!
-//! Three families are real, and one is refused by name.
-//!
-//! **1. The target C ABI.** `size_t` is the header's `size_t` from `<stddef.h>`,
-//! `int` is 32-bit on every target this package builds for
-//! (`x86_64-linux-gnu`, `aarch64-linux-gnu`, `aarch64-macos-none`,
-//! `x86_64-windows-gnu`, `riscv64-linux-gnu`, `wasm32-wasi`), `double` is
-//! IEEE-754 binary64, and `PJ_DIRECTION`, `PJ_TYPE`, `PJ_LOG_LEVEL`,
-//! `PJ_GUESSED_WKT_DIALECT` and `PJ_COORDINATE_SYSTEM_TYPE` are C enumerations
-//! whose underlying type the provider chose. The build puts `-DPROJ_DLL=` on
-//! the compile line, which skips the whole `#ifndef PROJ_DLL` chain at
-//! `src/proj.h:143-155` and leaves the macro empty; without that define the GCC
-//! branch makes it `__attribute__((visibility("default")))` (`:151`) and the
-//! MSVC branch `__declspec(dllexport)`/`__declspec(dllimport)` (`:145-149`),
-//! which changes linkage and not layout. A provider is a shared object, so its
-//! own `DT_NEEDED` must resolve: it links `libm`, `libdl` where they exist,
-//! pthreads where they exist (`-DPROJ_HAS_PTHREADS`), and the vendored SQLite3
-//! amalgamation. None of that is negotiable from here and none of it is checked;
-//! it is named so that "a compatible provider" means something a caller can
-//! reason about.
-//!
-//! **2. The record layouts.** These cross the boundary by pointer, by value, or
-//! as the callee's own storage, and a provider compiled against a different
-//! declaration of any of them writes into or reads out of the wrong places.
-//!
-//!   * `PJ_COORD` (`src/proj.h:315-330`) is a union of fourteen arms over four
-//!     doubles: `double v[4]` (`:316`), `PJ_XYZT xyzt` (`:318`),
-//!     `PJ_UVWT uvwt` (`:319`), `PJ_LPZT lpzt` (`:320`), `PJ_GEOD geod` (`:321`),
-//!     `PJ_OPK opk` (`:322`), `PJ_ENU enu` (`:323`), `PJ_XYZ xyz` (`:324`),
-//!     `PJ_UVW uvw` (`:325`), `PJ_LPZ lpz` (`:326`), `PJ_XY xy` (`:327`),
-//!     `PJ_UV uv` (`:328`) and `PJ_LP lp` (`:329`). It crosses the boundary by
-//!     value in both directions: `proj_coord` (`:656`), `proj_trans` (`:629`),
-//!     `proj_geod` (`:676`), `proj_geod_direct` (`:705`),
-//!     `proj_get_suggested_operation` (`:1426`), `proj_lp_dist` (`:663`),
-//!     `proj_lpz_dist` (`:666`), `proj_xy_dist` (`:669`) and `proj_xyz_dist`
-//!     (`:672`) all take or return one, `proj_trans_array` (`:631`) and
-//!     `proj_roundtrip` (`:659`) write through a `PJ_COORD *`, and `proj_factors`
-//!     (`:783`) takes one by value. So its size and every member offset are ABI,
-//!     not convenience. `validate` below checks it through four arms.
-//!   * The arm types themselves: `PJ_XYZT` is `{x, y, z, t}` (`:273-275`),
-//!     `PJ_UVWT` is `{u, v, w, t}` (`:276-278`), `PJ_LPZT` is `{lam, phi, z, t}`
-//!     (`:279-281`), `PJ_XYZ`/`PJ_UVW`/`PJ_LPZ` are the three-member forms
-//!     (`:303-311`), and `PJ_GEOD`, `PJ_OPK`, `PJ_ENU` are three-member
-//!     (`:282-290`). All are plain `double` runs, so a provider cannot disagree
-//!     about a member's width - only about offsets, which `PJ_COORD`'s own
-//!     layout check covers.
-//!   * `PJ_FACTORS` (`:206-221`, the alias of `struct P5_FACTORS`) is thirteen
-//!     `double`s in a fixed order, returned by value from `proj_factors`
-//!     (`:783`).
-//!   * `PJ_INFO` (`:332-344`) is three `int`s, four `const char *`, one
-//!     `const char *const *` and one `size_t`, returned by value from
-//!     `proj_info` (`:786`).
-//!   * `PJ_PROJ_INFO` (`:346-353`) is three `const char *`, one `int` and one
-//!     `double`, returned by value from `proj_pj_info` (`:787`).
-//!   * `PROJ_CRS_INFO` (`:1043-1075`) is the record a caller reads *through a
-//!     provider's array*, so every member offset is ABI. It is **not** named
-//!     `PJ_CRS_INFO`: there is no `PJ_CRS_INFO` at this pin, and a caller that
-//!     writes that name is writing one that does not exist.
-//!   * `PJ_AREA` is **opaque at the public boundary**: `src/proj.h:203-204`
-//!     declares `struct PJ_AREA;` and nothing else. Its definition lives in
-//!     `src/proj_internal.h:273-280` and is a C++ struct containing a
-//!     `std::string`, so no layout of it crosses this boundary at all. A caller
-//!     only ever holds the `PJ_AREA *` that `proj_area_create` (`:607`) hands
-//!     back and passes unchanged to `proj_area_set_name` (`:612`),
-//!     `proj_area_set_bbox` (`:608`) and `proj_area_destroy` (`:613`). This file
-//!     records that rather than describing a layout it cannot see.
-//!
-//! **3. The allocator, which is libc's inside PROJ.** PROJ returns strings and
-//! lists the caller must release, and it releases them with the provider's own
-//! allocator, not with anything a Zig caller owns:
-//!
-//!   * `proj_as_wkt` (`:1277`), `proj_as_proj_string` (`:1280`),
-//!     `proj_as_projjson` (`:1284`), `proj_context_errno_string` (`:776`),
-//!     `proj_errno_string` (`:775`) and `proj_get_name` (`:1249`) return
-//!     `const char *` that is the provider's own storage or its own allocation.
-//!     For the `const char *` that is documented as owned by the object
-//!     (`proj_get_name`) it is a borrow and nothing is freed; for the strings a
-//!     caller must release it is `proj_string_destroy` (`:1355`).
-//!   * `proj_get_authorities_from_database` (`:1304`),
-//!     `proj_get_codes_from_database` (`:1306`),
-//!     `proj_get_geoid_models_from_database` (`:1296`) return a
-//!     `PROJ_STRING_LIST` that `proj_string_list_destroy` (`:1187`) releases.
-//!   * `proj_get_units_from_database` (`:1328`) returns a
-//!     `PROJ_UNIT_INFO **` that `proj_unit_list_destroy` (`:1334`) releases, and
-//!     each `PROJ_UNIT_INFO` carries its own `char *` members (`:1120-1146`).
-//!   * `proj_get_celestial_body_list_from_database` (`:1311`) returns a
-//!     `PROJ_CELESTIAL_BODY_INFO **` that `proj_celestial_body_list_destroy`
-//!     (`:1314`) releases.
-//!
-//! None of that memory comes from a Zig allocator: a provider's
-//! `proj_string_destroy` is `free` on the provider's C library, reached through
-//! the provider's own `libc`. **A Zig caller cannot supply a leak oracle for
-//! any of it**, and neither can this package's test framework: the allocation
-//! happens inside the loaded object, whose allocator is not ours to instrument.
-//! A facade therefore exposes those returns as borrows or as values it does not
-//! free with `Allocator.free`, and this file records that as a boundary rather
-//! than pretending a leak check covers it.
-//!
-//! **4. The `PROJ_RENAME_SYMBOLS` family, which is refused by name.** A provider
-//! built with `PROJ_RENAME_SYMBOLS` defines `proj.h` with
-//! `proj_symbol_rename.h` included, and that header renames **314** symbols:
-//! 291 `proj_*` (`#define proj_area_create internal_proj_area_create` and so on),
-//! the 21 bundled GeographicLib `geod_*` entry points, `projinfo` and
-//! `pj_release`. Such an object exports `internal_proj_*` and exports **none** of
-//! the 292 names under the names this build asks for, so `load` refuses it with
-//! `MissingSymbol` at the first of them.
-//!
-//! That is the correct outcome, not a gap. A PROJ build that renames its symbols
-//! is a different external ABI family from one that does not, and nothing in a
-//! symbol's spelling says which a given object is. The one detail worth
-//! recording because it is not uniform: the generated rename header does **not**
-//! mention `proj_crs_is_dynamic` (`:1435`) - all 291 renames are present and
-//! that single declaration is absent - so a `PROJ_RENAME_SYMBOLS` build exports
-//! 291 names renamed and this one unrenamed, and is still refused, because 291
-//! missing is 291 missing.
-//!
-//! ## What `validate` checks, and what it does not
-//!
-//! Three checks, run after every symbol has resolved and before anything is
-//! published. A non-null answer is `ValidationFailed` and the candidate is
-//! closed. None of them compares a version string, and none of them calls an
-//! entry point whose failure mode is `abort`.
-//!
-//!   1. **`proj_context_create()` answers non-null, and `proj_context_destroy`
-//!      releases it.** Upstream implements the first as
-//!      `new (std::nothrow) pj_ctx(*pj_get_default_ctx())`
-//!      (`src/ctx.cpp:305-307`), so a null answer means the provider could not
-//!      satisfy one fresh context at all - and it is the provider's own
-//!      allocator that failed. The destroy goes through this same table, so the
-//!      check never creates a context with one provider and releases it with
-//!      another, and `proj_context_destroy` is `delete ctx` (`src/ctx.cpp:318`)
-//!      after two explicit no-op guards (`:310-314`). It also touches no
-//!      database: `pj_get_default_ctx()` (`src/ctx.cpp:188-194`) is a function
-//!      -local static default context, and nothing in either function opens
-//!      `proj.db`. **What it does not prove:** that the provider's later
-//!      allocations succeed, and nothing about the C++ runtime underneath it
-//!      beyond the one `new` this call makes.
-//!   2. **`proj_coord(1.5, 2.5, 3.5, 4.5)` reads back through every arm of this
-//!      build's `PJ_COORD`.** Upstream writes exactly four stores -
-//!      `res.v[0] = x; res.v[1] = y; res.v[2] = z; res.v[3] = t;` and returns it
-//!      (`src/coordinates.cpp:38-45`) - so this is a direct statement about the
-//!      union's layout rather than a coincidence: a provider whose `PJ_COORD`
-//!      packed, reordered, or narrowed its arms would not place 1.5 at
-//!      `v[0]`. The values are exact in binary64 (all four are dyadic
-//!      rationals), so the comparison is `!=` against a constant and not a
-//!      tolerance. The arms checked are `v[0..3]` (the four `double`s
-//!      themselves), `xyzt` (`.x .y .z .t`, the member-name aliasing
-//!      `src/proj.h:273-275`), `xyz` (`.x .y .z`) and `lpz` (`.lam .phi .z`) -
-//!      between them, every member name and every offset in the union that a
-//!      caller could name, since every other arm of `PJ_COORD` is a prefix of one
-//!      of these three. **What it does not prove:** anything about a provider
-//!      whose union happens to be laid out compatibly but whose *other* records
-//!      disagree; those are not checked at load time and the tests are where they
-//!      are observed.
-//!   3. **`proj_create(ctx, "+proj=longlat +ellps=WGS84 +type=crs")` answers
-//!      non-null, `proj_get_type` calls it `PJ_TYPE_GEOGRAPHIC_2D_CRS`, and
-//!      `proj_destroy` releases it.** This is the object lifecycle check, and it
-//!      is deliberately database-free: `proj_create` only opens `proj.db` when
-//!      the text has no `proj=` or has an `init=`
-//!      (`src/iso19111/c_api.cpp:624-627`), and this definition has a `proj=`
-//!      and no `init=`, so the database is never touched. That the definition is
-//!      a geographic 2D CRS is upstream's own statement: `+proj=longlat +ellps=
-//!      WGS84 +type=crs` builds a `GeographicCRS` with `CS[ellipsoidal,2]`
-//!      (`test/unit/test_io.cpp:11082-11097`), and `proj_get_type` maps a
-//!      `GeographicCRS` with a two-axis coordinate system to
-//!      `PJ_TYPE_GEOGRAPHIC_2D_CRS` (`src/iso19111/c_api.cpp:1282-1284`).
-//!      `proj_get_type` answers `PJ_TYPE_UNKNOWN` for a null object
-//!      (`:1240-1242`) and otherwise walks the ISO 19111 object, so a non-null
-//!      answer of the right type is a statement about the provider's type
-//!      registry and not about a hard-coded word. **What it does not prove:**
-//!      anything numerical, and nothing about grid availability, which for this
-//!      package is a data statement (`§4` of the shared contract) rather than a
-//!      build result.
-//!
-//! Everything `validate` calls is one of the 292 symbols that already resolved,
-//! every call works on storage `validate` owns or on a context it created, it
-//! runs in one thread before publication, it allocates nothing itself, and it
-//! leaves nothing behind except the provider's own one-time statics - the
-//! default context of check 1, which is `static` (`src/ctx.cpp:192`) and
-//! process-lifetime by upstream's own design. It has no `proj.db`, no network,
-//! no environment variable and no grid.
-//!
-//! What `validate` deliberately does **not** call is `proj_errno_string` or
-//! anything else for a version. PROJ publishes no symbol that answers "which
-//! version are you": `PROJ_VERSION_MAJOR`/`_MINOR`/`_PATCH` (`src/proj.h:176-178`)
-//! are preprocessor macros, so they are constants in *this* build's translation
-//! and there is nothing exported to ask a provider. `PJ_INFO` carries
-//! `major`/`minor`/`patch` (`src/proj.h:333-335`) but it is filled in from the
-//! same macros, so reading it would be reading this build's own constants back
-//! out of the provider's memory, which proves nothing about the provider. A
-//! version check here would be a check that cannot fail, which is worse than no
-//! check at all: this file names the boundary it can establish and does not
-//! dress up a constant as one.
+//! PROJ-specific configuration for the runtime loader.
+//! It requires all 292 functions from `src/proj.h`, validates ABI-sensitive behavior, and rejects `PROJ_RENAME_SYMBOLS` providers.
+//! Returned strings and lists use provider-owned storage; release owned values with PROJ destroy APIs.
 
+!     `proj_get_crs_list` appears only inside a Doxygen comment at
 const rt = @import("rt");
 const std = @import("std");
 
-/// The synchronization this loader calls, bound by exact name.
-///
-/// The names below are `runtime/sync.h` compiled with
-/// `RT_SYNC_PREFIX=proj_rt`, which is what `runtime/graph.zig` passes. Two
-/// spellings of that prefix have to agree: this file names the symbols, and
-/// graph.zig defines the macro. A build where they disagree does not link, and
-/// that is the whole error report: there is no runtime path that could hide it.
-///
-/// The core in `runtime/loader.zig` never names a symbol of its own, which is
-/// what lets two SDKs, or two configurations of one SDK, hold their own loader
-/// state in one process without sharing any of it.
+/// Namespaced synchronization binding used by the generic loader.
+/// Its `proj_rt` prefix must match `runtime/sync.c`.
 pub const Sync = struct {
     extern fn proj_rt_lock() void;
     extern fn proj_rt_unlock() void;
     extern fn proj_rt_wait() void;
     extern fn proj_rt_broadcast() void;
-    // `unsigned long long`. Declared as u64, which is the same type in every
-    // ABI this SDK targets: 64-bit on x86_64, aarch64, riscv64 and wasm32.
+    // Matches C `unsigned long long` on the supported targets.
     extern fn proj_rt_thread_self() u64;
 
     pub fn lock() void {
@@ -366,23 +38,14 @@ pub const Sync = struct {
     }
 };
 
-/// The four coordinates `validate` writes through `proj_coord` and reads back.
-///
-/// Exact in binary64 - each is a dyadic rational - so the layout check is `!=`
-/// against a constant rather than a tolerance, and a provider that agrees to
-/// within a rounding error still fails it if it disagrees about a field's place.
+/// Exact dyadic values for the provider-side `PJ_COORD` layout check.
 const check_x: f64 = 1.5;
 const check_y: f64 = 2.5;
 const check_z: f64 = 3.5;
 const check_t: f64 = 4.5;
 
-/// Every `proj_*` function `src/proj.h` declares at this pin, with the line it
-/// is declared on.
-///
-/// Derived, not written from memory: see "How the count was established" above.
-/// This is the list `Config` checks the generated dispatch against, and it is
-/// the record of what a provider owes this build. Sorted so a diff against a
-/// future header reads as a change in the set rather than in a reordering.
+/// Required `proj_*` exports declared in `src/proj.h`.
+/// `Config` checks this set against the generated dispatch.
 const header_symbols = [_][]const u8{
     "proj_alter_id",                     // src/proj.h:1727
     "proj_alter_name",                   // src/proj.h:1725
@@ -678,10 +341,7 @@ const header_symbols = [_][]const u8{
     "proj_xyz_dist",                     // src/proj.h:672
 };
 
-/// Whether `names` holds `name`, exactly.
-///
-/// `std.mem.eql` rather than pointer identity, because the dispatch's names and
-/// the list's names come from two different texts and only their bytes matter.
+/// Compares name bytes rather than pointer identity.
 fn listHas(names: []const []const u8, name: []const u8) bool {
     for (names) |candidate| {
         if (std.mem.eql(u8, candidate, name)) return true;
@@ -689,7 +349,7 @@ fn listHas(names: []const []const u8, name: []const u8) bool {
     return false;
 }
 
-/// The same question of `symbols`, which is a slice of `rt.Symbol`.
+/// Tests whether the generated table contains a required symbol.
 fn tableHas(names: []const rt.Symbol, name: []const u8) bool {
     for (names) |symbol| {
         if (std.mem.eql(u8, symbol.name, name)) return true;
@@ -697,54 +357,23 @@ fn tableHas(names: []const rt.Symbol, name: []const u8) bool {
     return false;
 }
 
-/// The loader's configuration for this SDK, given the dispatch that owns the
-/// table.
-///
-/// `dispatch` is the generated module, passed as a type by the dispatch itself
-/// so that this file never has to import it. The direction is one-way on
-/// purpose: the descriptor knows what the loader needs, the dispatch knows what
-/// the header said, and neither imports the other.
+/// Binds PROJ metadata and ABI checks to the generated dispatch.
+/// Compile-time checks match its symbols against `header_symbols`.
 pub fn Config(comptime dispatch: type) type {
     return struct {
-        /// Named in the pre-load panic, so the message says which library was
-        /// reached for before it was loaded.
+        /// Name shown by pre-load panics.
         pub const library_name = "proj";
 
-        /// The table the generated dispatch declares, and the symbols it needs
-        /// to fill it. Both come from the translated header, not from this file;
-        /// what this file does is hold the header's own list and check the two
-        /// against each other, in the `comptime` block below.
+        /// Dispatch table and required exports from the translated header.
         pub const table = dispatch.Table;
         pub const symbols = dispatch.symbols;
         pub const optional_symbols = dispatch.optional_symbols;
 
-        /// This project's namespaced synchronization binding.
+        /// Namespaced synchronization callbacks.
         pub const sync = Sync;
 
-        /// Set equality, checked rather than claimed.
-        ///
-        /// Four failures are named, and each one is a fact about this build's
-        /// translation that a reader would otherwise have to take on trust:
-        ///
-        ///   * a count mismatch, which means the header and the translation
-        ///     disagree about how many entry points there are;
-        ///   * a routed name the header does not declare, which means
-        ///     something reached the translation that is not PROJ's - the only
-        ///     way that can happen is the include closure, so the message says
-        ///     so and points at `graph.zig`'s `libc_noise`;
-        ///   * a declared name the dispatch does not route, which means a
-        ///     declaration was dropped between the header and the translation;
-        ///   * a routed symbol that is not a function, which would mean an
-        ///     `extern` object appeared where this package expects none.
-        ///
-        /// Position is deliberately not compared: the dispatch's order is the
-        /// translation's declaration order and `header_symbols` is sorted, so
-        /// only the sets mean anything.
-        ///
-        /// `optional_symbols.len == 0` is checked here for the same reason and
-        /// with the reason stated above the list: `src/proj.h` has no
-        /// conditional entry point at this pin, so there is nothing for it to
-        /// hold.
+        /// Rejects count, symbol-set, and symbol-kind mismatches at compile time.
+        /// Set comparison ignores declaration order; all 292 exports are required.
         comptime {
             if (symbols.len != header_symbols.len) {
                 @compileError(std.fmt.comptimePrint(
@@ -807,11 +436,7 @@ pub fn Config(comptime dispatch: type) type {
             dispatch.assign(index, dst, address);
         }
 
-        /// One resolved address into one optional table field, and the empty
-        /// case beside it. Both index `optional_symbols`, which is empty at this
-        /// configuration, and both are kept because the loader calls them for
-        /// every optional symbol before each attempt and because a build that
-        /// did gain a conditional entry point would need them.
+        /// Assigns one optional export; this configuration has none.
         pub inline fn assignOptional(comptime index: usize, dst: *table, address: *const anyopaque) void {
             dispatch.assignOptional(index, dst, address);
         }
@@ -820,52 +445,21 @@ pub fn Config(comptime dispatch: type) type {
             dispatch.assignMissing(index, dst);
         }
 
-        /// The library-specific checks, run after every symbol resolved and
-        /// before anything is published.
-        ///
-        /// A non-null answer is `ValidationFailed` and the candidate is closed
-        /// without being published. What each check proves and what it does not
-        /// is stated in the module comment above; in short: one context can be
-        /// created and destroyed, this build's `PJ_COORD` is laid out where the
-        /// header says it is, and one CRS can be built from a PROJ string,
-        /// typed and destroyed without a database.
-        ///
-        /// Nothing here allocates, nothing here reads `proj.db`, nothing here
-        /// needs the network, and every symbol called is one of the 292 that
-        /// already resolved - so the work is entirely on storage this function
-        /// owns, in one thread, before publication.
+        /// Checks provider behavior before publishing the resolved table.
+        /// Returns a diagnostic if context, `PJ_COORD`, or CRS validation fails.
         pub fn validate(dst: *const table) ?[]const u8 {
-            // `proj_context_create` is `new (std::nothrow) pj_ctx(*pj_get_default_ctx())`
-            // upstream (src/ctx.cpp:305-307): one fresh context, out of the
-            // provider's own allocator, with no database open.
-            //
-            // `@intFromPtr` is the null test rather than `== null` because it is
-            // the one spelling that is correct whether the translated return
-            // type is `*PJ_CONTEXT` or `?*PJ_CONTEXT` (`doc/langref.html`,
-            // `@intFromPtr`: "value can be *T or ?*T"), and which of the two a
-            // given target's translation produced is not a thing this file can
-            // know at compile time.
+            // The provider creates the context with its allocator, without opening a database.
+            // Translation may produce `*T` or `?*T`; `@intFromPtr` tests either for null.
             const ctx = dst.proj_context_create();
             if (@intFromPtr(ctx) == 0) {
                 return "proj_context_create() answered null, so this provider " ++
                     "could not satisfy one fresh context at all";
             }
-            // Declared first, so it runs last: the CRS below is released before
-            // the context that owns it.
+            // LIFO defer order releases the CRS before its owning context.
             defer _ = dst.proj_context_destroy(ctx);
 
-            // `proj_coord` writes exactly four stores into `v[0..3]` and returns
-            // the union by value (src/coordinates.cpp:38-45). Reading them back
-            // through three of the arms is a layout check against the provider:
-            // `v` is the four doubles themselves, `xyzt` is the member-name
-            // aliasing of the same four (src/proj.h:273-275), `xyz` is the
-            // three-member form (`:303-305`) and `lpz` is the latitude/longitude
-            // three-member form (`:309-311`). Every other arm of `PJ_COORD` is a
-            // prefix of one of these three, so between them these four reads
-            // cover every offset and every member name the union has.
-            //
-            // The four values are exact in binary64, so this is `!=` against a
-            // constant and not a tolerance.
+            // `proj_coord` writes four values (src/coordinates.cpp:38-45); representative views check layout.
+            // Dyadic values are exact in binary64, so comparisons need no tolerance.
             const coord = dst.proj_coord(check_x, check_y, check_z, check_t);
             if (coord.v[0] != check_x or coord.v[1] != check_y or
                 coord.v[2] != check_z or coord.v[3] != check_t)
@@ -896,15 +490,7 @@ pub fn Config(comptime dispatch: type) type {
                     "not the one these headers describe";
             }
 
-            // The object lifecycle, with no database: `proj_create` only opens
-            // proj.db when the text has no "proj=" or has an "init="
-            // (src/iso19111/c_api.cpp:624-627), and this definition has a
-            // "proj=" and no "init=". That the answer is a geographic 2D CRS is
-            // upstream's own reading of this string
-            // (test/unit/test_io.cpp:11082-11097) mapped through
-            // `proj_get_type` (src/iso19111/c_api.cpp:1282-1284), so the check
-            // is a statement about the provider's type registry and not about a
-            // word this file chose.
+            // This `+proj=` definition avoids `proj.db` access (src/iso19111/c_api.cpp:624-627).
             const crs = dst.proj_create(ctx, "+proj=longlat +ellps=WGS84 +type=crs");
             if (@intFromPtr(crs) == 0) {
                 return "proj_create(\"+proj=longlat +ellps=WGS84 +type=crs\") " ++
@@ -914,14 +500,7 @@ pub fn Config(comptime dispatch: type) type {
             defer _ = dst.proj_destroy(crs);
 
             const kind = dst.proj_get_type(crs);
-            // The comparison is against the *translated* constant, not a number
-            // written here. `PJ_TYPE_GEOGRAPHIC_2D_CRS` arrives from
-            // `src/proj.h:888` as a top-level `pub const` in the translation -
-            // Aro renders a C enum's tag type as one `pub const` and each
-            // enumerator as another (`lib/compiler/translate-c/Translator.zig`,
-            // `transEnumDecl`, and `ast.zig`'s `.enum_constant` renderer) - so
-            // naming it here cannot drift from the header, and rewriting it as
-            // an ordinal would be the one change that could.
+            // Compare the translated enum value, not a hard-coded ordinal.
             if (kind != dispatch.PJ_TYPE_GEOGRAPHIC_2D_CRS) {
                 return "proj_get_type() did not report " ++
                     "PJ_TYPE_GEOGRAPHIC_2D_CRS for a \"+proj=longlat +type=crs\" " ++

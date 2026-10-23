@@ -1,91 +1,23 @@
 // SPDX-License-Identifier: MIT
 // See FORK-LICENSE.md for what that identifier covers.
 
-//! Compile-only exercise of every public method of the facade.
-//!
-//! **This file is compiled and is never run.** It exists for exactly one reason:
-//! Zig analyses a function body when something calls it, so a compile that never
-//! reaches a facade method proves nothing about that method. The `test` block at
-//! the foot of the file calls `exercise`, which is what instantiates every body
-//! below and turns "the declaration exists" into "the body type-checks"; the
-//! build graph compiles that test artifact and attaches **no run step** to it.
-//! There is deliberately **no `main`**, so nothing here can be run as a program
-//! even by accident.
-//!
-//! `zig build check` compiles this file as the root of a module for all six cross
-//! targets, and `zig build test` compiles it for the requested target. Neither
-//! runs it.
-//!
-//! The behavioural proof lives elsewhere and is not duplicated here: `tests.zig`
-//! checks a coordinate transformation against an independent known answer and a
-//! datum shift against the reported failure, `smoke.zig` runs one transformation
-//! natively, and `consumer/src/main.zig` repeats the check as a dependent.
-//!
-//! ## What the checks inside are
-//!
-//! Most of them are about *calling* the method, not about its answer. Where a
-//! check is cheap and true of every build that reaches it — that a coordinate's
-//! union arms alias, that a degree→radian→degree round trip comes back, that
-//! `proj_errno_set(P, 0)` is not a clear — it is an ordinary comparison, so the
-//! compile also proves the return type is what the doc comment says. Where a check
-//! would depend on `proj.db`, on a grid file or on a network it is deliberately
-//! **absent**, and the doc comment says which. A check that passed only because the
-//! data was missing would be worth nothing here.
-//!
-//! Every constructor that needs a database is called through a small
-//! `refusalOrSuccess` helper rather than a bare `try`, so a build with no
-//! `proj.db` still reaches every *other* method instead of stopping at the first
-//! `EPSG:` lookup.
-//!
-//! ## The module this file is compiled in must carry `c` and the archive
-//!
-//! This file never names `c` as an import of its own beyond `proj.c`, and that is
-//! not evidence that `c` is unnecessary: `root.zig` resolves its own
-//! `@import("c")` in the import table of whichever module it is being analysed as
-//! part of. Under `zig build check` this file is the root of a fresh module, so
-//! that module — not the facade's — has to supply `c`, the `rt` loader core in a
-//! linked build, and the linked archive. Dropping them fails with a missing-import
-//! error naming this file rather than the build line that omitted them.
-//!
-//! ## The provider, in a runtime-loading build
-//!
-//! Under `-Druntime=true` nothing native is linked into the module, so a real run
-//! would have to name a provider before anything else. This file is never run, and
-//! the guard below is a runtime `if` rather than a `comptime` one precisely so that
-//! `proj.load`'s body is instantiated and type-checked in **both** configurations:
-//! the linked build type-checks the panic path, the runtime build type-checks the
-//! dispatch call.
-
+//! Compile-only calls that instantiate every public PROJ facade method.
+//! Data-dependent behavior is covered by tests.zig and smoke.zig.
 const std = @import("std");
 
-// The facade, reached by file path rather than by module name. Whichever module
-// this file is analysed as part of still has to supply `c`; see above.
+// Import the facade by path; the containing module still supplies `c`.
 const proj = @import("root.zig");
 
-/// The raw translated route, reached the way `zig/root.zig` itself reaches it.
-/// Under `-Druntime=true` this is the generated dispatch, so every call through
-/// `proj.c` here is a call through the resolved table.
 const c = proj.c;
 
-/// Everything this file can fail with.
-///
-/// `UnexpectedResult` is its own verdict: a public call answered something that
-/// contradicts an expectation this file states. The facade's own `Error` is carried
-/// through unchanged rather than flattened into that single name, so a refusal that
-/// reaches the caller still says which refusal it was.
+/// Facade, loader and expectation errors returned by this exercise.
 pub const Failure = proj.Error || proj.LoadError || error{
     /// A call answered something this file expected not to happen.
     UnexpectedResult,
 };
 
-/// A path no machine has, so that a load attempt would fail for a real reason
-/// rather than by guesswork. Never opened: this file is compiled, not run.
 const absent_provider = "/proj-no-such-directory/libproj.so.25";
 
-/// A `+proj=` definition that needs nothing but the numbers in it.
-///
-/// No `+init=epsg:`, no `+datum=` lookup and no grid, so the only thing it asks of
-/// this build is that the C parser and the compiled core are present.
 const plain_geographic = "+proj=longlat +a=6378137 +b=6378137 +no_defs";
 const plain_mercator =
     "+proj=merc +a=6378137 +b=6378137 +lat_ts=0 +lon_0=0 +x_0=0 +y_0=0 +k=1 +units=m +no_defs";
@@ -94,9 +26,6 @@ fn expect(condition: bool) Failure!void {
     if (!condition) return error.UnexpectedResult;
 }
 
-/// Assert that `got` is within `tolerance` of `want`. Two NaNs count as equal,
-/// because upstream answers NaN for out-of-range input and a check that could not
-/// say so would be checking the wrong thing.
 fn expectNear(want: f64, got: f64, tolerance: f64) Failure!void {
     if (std.math.isNan(want) or std.math.isNan(got)) {
         if (std.math.isNan(want) and std.math.isNan(got)) return;
@@ -105,13 +34,6 @@ fn expectNear(want: f64, got: f64, tolerance: f64) Failure!void {
     if (!std.math.approxEqAbs(f64, want, got, tolerance)) return error.UnexpectedResult;
 }
 
-/// The result type `refusalOrSuccess` hands back for `call`.
-///
-/// One optional level deeper than the call's own payload when that payload is not
-/// already optional, so null means "upstream refused" and non-null is the value it
-/// returned. A call that already answers an optional — `ObjectList.get` — keeps its
-/// own type: there is no second meaning to add, and `??T` would make every caller
-/// unwrap twice for no extra information.
 fn refusalResult(comptime call: type) type {
     const payload = @typeInfo(call).error_union.payload;
     return switch (@typeInfo(payload)) {
@@ -120,13 +42,6 @@ fn refusalResult(comptime call: type) type {
     };
 }
 
-/// Call a fallible facade method, treating upstream's own refusals as "not this
-/// build's problem" and only a mistake on our side as a failure.
-///
-/// The point is reach, not verdict: a constructor that needs `proj.db` must not
-/// stop the exercise before the methods after it are instantiated. The caller
-/// captures one optional level, which for the common `Error!T` case is the one
-/// this function adds.
 fn refusalOrSuccess(call: anytype) Failure!refusalResult(@TypeOf(call)) {
     return call catch |err| switch (err) {
         error.OutOfMemory => error.UnexpectedResult,
@@ -135,23 +50,13 @@ fn refusalOrSuccess(call: anytype) Failure!refusalResult(@TypeOf(call)) {
     };
 }
 
-/// The loader route, in whichever configuration this build is.
-///
-/// Compiled, never run: reaching the line below would attempt to open a path that
-/// does not exist and fail. What is proved here is that the call type-checks
-/// against the dispatch in a runtime-loading build and against the panic path in a
-/// linked one.
 fn loadProvider() Failure!void {
     if (!proj.runtime_loaded) return;
     try proj.load(.{ .path = absent_provider });
     _ = proj.loadedSource();
 }
 
-/// Call every public method of the facade once.
-///
-/// Nothing here asserts a number that depends on `proj.db`, on a grid file or on a
-/// network. The data-dependent proofs are in `tests.zig`; this file is about
-/// reachability and about the handful of invariants that hold without any data.
+/// Instantiate every facade method; return facade, loader or expectation errors.
 pub fn exercise() Failure!void {
     try loadProvider();
 
@@ -160,33 +65,18 @@ pub fn exercise() Failure!void {
     try databaseQueries();
     try transformationAndOperations();
 
-    // Every handle created above was destroyed on its own path. `cleanup` is last
-    // because it is upstream's process-wide teardown (`src/proj.h:816`) and nothing
-    // may use PROJ afterwards.
+    // Destroy every handle before process-wide cleanup, which must be last.
     proj.cleanup();
 }
 
-// The reference that makes this file more than a pile of declarations.
-//
-// A `test` block's body is semantically analysed when the test artifact is
-// **compiled**, which is what `addExercise` in `build.zig` asks for, and this build
-// graph never runs that artifact. Calling `exercise` from here is therefore what
-// instantiates every body below — Zig analyses a function body when something
-// calls it, not when it is declared — while no call in this file is ever
-// executed. Running it would open `absent_provider` under `-Druntime=true` and
-// would tear down PROJ's process-wide caches, which is upstream's one-way
-// `cleanup` (`:144-148`).
+// Compile-only: execution would open the absent provider and call process-wide cleanup.
 test "facade API exercise: every public method is instantiated" {
     try exercise();
 }
 
-// ---- Module level ------------------------------------------------------------
-
 fn moduleLevel() Failure!void {
     const reported = proj.version();
-    // The only thing asserted is the shape: a version is three numbers and three
-    // possibly-absent strings. What the numbers are belongs to the provenance and
-    // licence gates, not here.
+    // Check the version result's shape, not its release-specific values.
     try expect(reported.major >= 0);
     try expect(reported.minor >= 0);
     try expect(reported.patch >= 0);
@@ -197,15 +87,12 @@ fn moduleLevel() Failure!void {
     const point = proj.coord(1.0, 2.0, 3.0, 4.0);
     try expect(point.v[0] == 1.0 and point.v[1] == 2.0 and point.v[2] == 3.0 and point.v[3] == 4.0);
 
-    // The union arms are the same four words read differently, which is what
-    // `src/proj.h:313-314` says the union exists for. Reading them through `lp` and
-    // `xyzt` turns that claim into a comparison.
+    // Compare union views to check that the coordinate arms alias the same values.
     try expect(point.lp.lam == 1.0 and point.lp.phi == 2.0);
     try expect(point.xyzt.x == 1.0 and point.xyzt.y == 2.0);
     try expect(@sizeOf(proj.Coord) == 4 * @sizeOf(f64));
 
-    // A degree→radian→degree round trip is one multiplication by a constant each
-    // way, so for these values it is exact to a double.
+    // Check a degree-to-radian-to-degree round trip.
     try expectNear(137.0, proj.toDeg(proj.toRad(137.0)), 1e-12);
 
     try expect(!proj.isErrorCoordinate(point));
@@ -219,23 +106,17 @@ fn moduleLevel() Failure!void {
     try expectNear(5.0, proj.xyDistance(proj.coord(0, 0, 0, 0), proj.coord(3, 4, 0, 0)), 0.0);
     try expectNear(13.0, proj.xyzDistance(proj.coord(0, 0, 0, 0), proj.coord(3, 4, 12, 0)), 0.0);
 
-    // Both releases are called with null, which is the one argument that is
-    // unconditionally safe for them: `free(NULL)` is defined to do nothing
-    // (`src/iso19111/c_api.cpp:9557`) and `proj_int_list_destroy` guards on the
-    // pointer the same way (`src/proj.h:1300`). Anything else here would be a
-    // pointer this file does not own.
+    // Only free null; this file owns no strings or lists.
     proj.freeString(null);
     proj.freeIntList(null);
 
-    // The struct aliases are the translated types themselves, so a literal with
-    // upstream's field names type-checking at all is the layout claim.
+    // Verify that the public aliases accept upstream field names.
     const xyzt: proj.Xyzt = .{ .x = 1, .y = 2, .z = 3, .t = 4 };
     try expect(xyzt.t == 4.0);
     const lpzt: proj.Lpzt = .{ .lam = 1, .phi = 2, .z = 3, .t = 4 };
     try expect(lpzt.phi == 2.0);
 
-    // `PJ_FACTORS` and `PJ_PROJ_INFO` carry upstream's own field names; reading
-    // them here is what instantiates the aliases.
+    // Verify the translated aliases expose upstream fields.
     const scaling: proj.Factors = undefined;
     _ = scaling.meridional_scale;
     _ = scaling.parallel_scale;
@@ -257,8 +138,7 @@ fn moduleLevel() Failure!void {
     _ = about.has_inverse;
     _ = about.accuracy;
 
-    // The raw route, called exactly as a C consumer calls it, so the translated
-    // declarations behind the facade are instantiated too.
+    // Exercise the raw translated C declaration too.
     const raw_info: proj.Info = c.proj_info();
     try expect(raw_info.major == reported.major);
     _ = raw_info.minor;
@@ -267,7 +147,7 @@ fn moduleLevel() Failure!void {
     _ = raw_info.path_count;
 }
 
-// ---- Context, objects and their identity -------------------------------------
+// Context and objects.
 
 fn contextAndObjects() Failure!void {
     const ctx = try proj.Context.create();
@@ -277,15 +157,13 @@ fn contextAndObjects() Failure!void {
     defer second.destroy();
     try expect(second.ptr != ctx.ptr);
 
-    // Autoclose is on upstream; asking for it is a request. Which default the
-    // process has is not asserted, because `src/proj.h:1189-1190` declares none.
+    // Enable autoclose explicitly; no default is assumed.
     ctx.setAutocloseDatabase(true);
     ctx.useProj4InitRules(false);
     try expect(!ctx.getUseProj4InitRules(false));
     try expect(!ctx.getUseProj4InitRules(true));
 
-    // The log level call returns the previous one, so setting and reading it back
-    // is one round trip rather than two independent statements.
+    // Setting the log level returns the previous value.
     const previous = ctx.logLevel(.none);
     try expect(@intFromEnum(ctx.logLevel(previous)) == @intFromEnum(previous));
     ctx.logFunc(null, null);
@@ -313,16 +191,14 @@ fn contextAndObjects() Failure!void {
         const crs = object;
         defer crs.destroy();
         try objectIdentity(ctx, crs);
-        // `not_wkt` is a normal answer, not a failure: this is a guess about text
-        // and it builds nothing (`src/proj.h:1204-1205`).
+        // Invalid WKT is a normal dialect-guess result.
         try expect(ctx.guessWktDialect("not wkt at all") == .not_wkt);
     }
 
     if (try refusalOrSuccess(ctx.createFromDatabase("EPSG", "4326", .crs, false, null))) |object| {
         const crs = object;
         defer crs.destroy();
-        // The one registry fact that needs no projection: an EPSG CRS reports its
-        // own authority and code, which come out of `proj.db`.
+        // Verify the EPSG authority and code reported from proj.db.
         if (crs.idAuthName(0)) |authority| {
             try expect(std.mem.eql(u8, authority, "EPSG"));
         }
@@ -336,14 +212,6 @@ fn contextAndObjects() Failure!void {
     _ = ctx.errnoString(proj.ErrorCode.coord_transfm_no_operation);
 }
 
-/// `proj_errno_set`, `proj_errno_reset` and `proj_errno_restore` read as one
-/// contract, which is exactly what upstream's own doc comment at
-/// `src/ctx.cpp:275-294` describes.
-///
-/// Two facts make this worth a comparison rather than three calls: a zero argument
-/// is *ignored* rather than treated as a clear (`:242-243` and `:261-262`), and
-/// `proj_errno_restore` returns zero whatever it does (`:264`). Both would pass a
-/// "it did not crash" test and fail here.
 fn errnoQuartet(op: proj.Object) Failure!void {
     try expect(op.errno() == proj.ErrorCode.other_api_misuse or op.errno() == 0);
 
@@ -352,7 +220,7 @@ fn errnoQuartet(op: proj.Object) Failure!void {
         proj.ErrorCode.coord_transfm_no_operation);
     try expect(op.errno() == proj.ErrorCode.coord_transfm_no_operation);
 
-    // Zero does not clear: the code set a moment ago is still there.
+    // Zero does not clear the current error.
     try expect(op.errnoSet(0) == 0);
     try expect(op.errno() == proj.ErrorCode.coord_transfm_no_operation);
 
@@ -360,7 +228,7 @@ fn errnoQuartet(op: proj.Object) Failure!void {
     try expect(saved == proj.ErrorCode.coord_transfm_no_operation);
     try expect(op.errno() == 0);
 
-    // Restore returns zero whatever it does, and puts the saved code back.
+    // Restore returns zero and reinstates the saved error.
     try expect(op.errnoRestore(saved) == 0);
     try expect(op.errno() == proj.ErrorCode.coord_transfm_no_operation);
 
@@ -371,7 +239,6 @@ fn errnoQuartet(op: proj.Object) Failure!void {
     try expect(op.errno() == 0);
 }
 
-/// The whole identity and export surface of one object.
 fn objectIdentity(ctx: proj.Context, object: proj.Object) Failure!void {
     const kind = object.getType();
     try expect(@intFromEnum(kind) >= 0);
@@ -393,9 +260,7 @@ fn objectIdentity(ctx: proj.Context, object: proj.Object) Failure!void {
         _ = area.name;
     }
 
-    // Exports are borrows, not copies, and one object holds one string per form,
-    // so the next call of the same form replaces the last: reading all of them here
-    // is a reminder that they are different slots, not different allocations.
+    // Exports are borrowed; each format keeps one replaceable result slot.
     _ = object.asWkt(.wkt2_2015, null);
     _ = object.asWkt(.wkt2_2015_simplified, null);
     _ = object.asWkt(.wkt2_2019, null);
@@ -417,22 +282,18 @@ fn objectIdentity(ctx: proj.Context, object: proj.Object) Failure!void {
         try expect(list.len() >= 0);
     }
 
-    // `assignContext` rebinds the borrowed pointer; this file puts it straight back
-    // to the context it already had, so the pairing the handle documents is the
-    // pairing that survives.
+    // Restore the object's original context after rebinding the borrowed pointer.
     object.assignContext(ctx);
 }
 
-// ---- Database queries --------------------------------------------------------
+// Database queries.
 
 fn databaseQueries() Failure!void {
     const ctx = try proj.Context.create();
     defer ctx.destroy();
     const gpa = std.heap.page_allocator;
 
-    // These two are the copying methods, because upstream keeps one slot per
-    // context for each and the next call overwrites it. The copies are released
-    // here so the exercise leaves nothing behind.
+    // Copy returned context-owned values before the next call can replace them.
     if (try ctx.databasePath(gpa)) |path| {
         defer gpa.free(path);
         try expect(path.len > 0);
@@ -441,8 +302,7 @@ fn databaseQueries() Failure!void {
         defer gpa.free(value);
         try expect(value.len > 0);
     }
-    // A key with no value is null and that is not an error
-    // (`src/iso19111/c_api.cpp:457-459`).
+    // A missing metadata value is null, not an error.
     if (try ctx.databaseMetadata(gpa, "NO.SUCH.KEY")) |value| {
         gpa.free(value);
         return error.UnexpectedResult;
@@ -453,8 +313,7 @@ fn databaseQueries() Failure!void {
     ctx.setSqlite3VfsName("unix");
     _ = ctx.setDatabasePath(null, null, null);
 
-    // The network is the switch Fixture C depends on; this file only asks for the
-    // state it asked for.
+    // Exercise both network states without depending on Fixture C.
     _ = ctx.setNetworkEnabled(false);
     try expect(!ctx.networkEnabled());
     _ = ctx.setNetworkEnabled(true);
@@ -480,8 +339,7 @@ fn databaseQueries() Failure!void {
 
     try parametersAndLists(ctx);
 
-    // Celestial bodies are a separate array with its own release, which is why it
-    // is a second type and not another field of the unit list.
+    // Celestial bodies use a separate list type and destructor.
     if (try refusalOrSuccess(proj.celestialBodyListFromDatabase(ctx, null))) |bodies| {
         const list = bodies;
         defer list.destroy();
@@ -535,7 +393,7 @@ fn parametersAndLists(ctx: proj.Context) Failure!void {
     }
 }
 
-// ---- Transformation and operations -------------------------------------------
+// Transformations and operations.
 
 fn transformationAndOperations() Failure!void {
     const ctx = try proj.Context.create();
@@ -551,9 +409,7 @@ fn transformationAndOperations() Failure!void {
     const target = try ctx.createFromProjString(plain_mercator);
     defer target.destroy();
 
-    // This one needs `proj.db`: building an operation between two CRS objects goes
-    // through the factory, which reads the registry. A build without a database
-    // skips the surface below it rather than stopping.
+    // CRS-to-CRS construction needs proj.db; skip if upstream refuses.
     if (try refusalOrSuccess(ctx.crsToCrsFromPj(source, target, &area, null))) |built| {
         const operation = built;
         defer operation.destroy();
@@ -570,8 +426,7 @@ fn transformationAndOperations() Failure!void {
 
     try crsSurface(source, target);
 
-    // The `crsToCrs` form takes no options, so the two forms are told apart by
-    // their own signatures rather than by a shared parameter list.
+    // Exercise the no-options crsToCrs overload.
     if (try refusalOrSuccess(ctx.crsToCrs("EPSG:4326", "EPSG:3857", &area))) |built| {
         const other = built;
         defer other.destroy();
@@ -579,17 +434,13 @@ fn transformationAndOperations() Failure!void {
     }
 }
 
-/// Everything a coordinate operation can be asked to do with a coordinate.
 fn transformSurface(operation: proj.Object) Failure!void {
-    // `Direction.ident` is documented to return the coordinate untouched
-    // (`src/trans.cpp:222-223`), which is a fact about the direction value and
-    // needs no CRS to check.
+    // Identity direction returns the input unchanged.
     const identity = operation.trans(.ident, proj.coord(1.0, 2.0, 3.0, 4.0));
     try expect(identity.v[0] == 1.0 and identity.v[1] == 2.0);
 
     const forward = operation.trans(.fwd, proj.coord(0.0, 0.0, 0.0, 0.0));
-    // A result is either a coordinate or upstream's refusal, and upstream says which
-    // by recording an error when it refuses (`src/internal.cpp:65-68`).
+    // A refused transform returns an error coordinate and sets errno.
     try expect(!proj.isErrorCoordinate(forward) or operation.errno() != 0);
 
     _ = operation.angularInput(.fwd);
@@ -604,10 +455,7 @@ fn transformSurface(operation: proj.Object) Failure!void {
     };
     _ = operation.transArray(.fwd, &batch);
 
-    // `transGeneric` is the stride-based form: each column is its own array with
-    // its own stride in bytes and its own count, and a count of one means a
-    // broadcast constant (`src/trans.cpp:427-436`). A null column means "not
-    // supplied", which is how `z` and `t` are left out of a 2D transform.
+    // transGeneric accepts strided coordinate columns; null columns omit ordinates.
     var xs = [_]f64{ 0.0, 1.0, 2.0 };
     var ys = [_]f64{ 0.0, 1.0, 2.0 };
     const completed = operation.transGeneric(
@@ -643,9 +491,7 @@ fn transformSurface(operation: proj.Object) Failure!void {
 
     _ = operation.roundtrip(.fwd, 1, &batch);
 
-    // The angular distance needs a geodesic on the object, which only an operation
-    // carrying one has; `HUGE_VAL` is upstream's answer when it does not
-    // (`src/dist.cpp:43-45`), so only the call is made here.
+    // lpDist needs an operation with a geodesic; exercise the call only.
     _ = operation.lpDist(proj.coord(0, 0, 0, 0), proj.coord(1, 1, 0, 0));
 
     const scaling = operation.factors(proj.coord(0.0, 0.0, 0.0, 0.0));
@@ -655,7 +501,6 @@ fn transformSurface(operation: proj.Object) Failure!void {
     try coordoperationSurface(operation);
 }
 
-/// Everything that can be asked about a coordinate operation's own description.
 fn coordoperationSurface(operation: proj.Object) Failure!void {
     if (try refusalOrSuccess(operation.coordoperationMethodInfo())) |method| {
         _ = method.name;
@@ -706,7 +551,7 @@ fn coordoperationSurface(operation: proj.Object) Failure!void {
         }
     }
 
-    // The pair of questions that separates a real transformation from a fallback.
+    // Distinguish real transformations from fallback operations.
     _ = operation.coordoperationHasBallparkTransformation();
     _ = operation.coordoperationIsInstantiable();
 
@@ -731,8 +576,7 @@ fn operationFactory(ctx: proj.Context, source: proj.Object, target: proj.Object)
     factory.setDiscardSuperseded(true);
     factory.setAllowUseIntermediateCrs(.never);
 
-    // The two settings Fixture C depends on, asked here so every enum value is
-    // instantiated even in a build that never reaches a database.
+    // Instantiate every grid-availability option without requiring a database.
     factory.setGridAvailabilityUse(.discard_operation_if_missing_grid);
     factory.setGridAvailabilityUse(.used_for_sorting);
     factory.setGridAvailabilityUse(.ignored);
@@ -769,8 +613,7 @@ fn crsSurface(source: proj.Object, target: proj.Object) Failure!void {
     if (try refusalOrSuccess(source.normalizeForVisualization())) |normalized| {
         const visual = normalized;
         defer visual.destroy();
-        // The point of the call: the visual route and the authority route are two
-        // different objects, and this is where the axis order differs.
+        // Visual and authority CRS creation return distinct objects.
         try expect(visual.ptr != source.ptr);
     }
 
@@ -839,8 +682,7 @@ fn coordinateSystemSurface(crs: proj.Object) Failure!void {
             }
         }
 
-        // An index past the end is upstream's own refusal
-        // (`src/iso19111/c_api.cpp:9174-9177`), and it writes nothing.
+        // An index past the end is an upstream refusal with no output.
         if (cs.csAxisInfo(axes)) |_| {
             return error.UnexpectedResult;
         } else |err| switch (err) {
@@ -856,10 +698,7 @@ fn ellipsoidAndMeridian(geodetic: proj.Object) Failure!void {
         const shape = built;
         defer shape.destroy();
         if (try refusalOrSuccess(shape.ellipsoidParameters())) |parameters| {
-            // A semi-major axis is positive for every ellipsoid the registry
-            // defines, and upstream reports one number or the other: with
-            // `semi_minor_computed` set, `inv_flattening` is zero, and without it
-            // the flattening was computed from a semi-minor axis.
+            // The registry reports either a computed semi-minor axis or flattening.
             try expect(parameters.semi_major_metre > 0.0);
             try expect(parameters.semi_minor_computed or parameters.inv_flattening != 0.0);
             _ = parameters.semi_minor_metre;
