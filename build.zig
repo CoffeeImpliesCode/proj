@@ -1099,7 +1099,6 @@ fn addGraph(
     public: bool,
     project_db: ProjectDatabase,
 ) Graph {
-
     requireSupportedLinkage(b, target, linkage);
     const config = addProjConfig(b, target);
 

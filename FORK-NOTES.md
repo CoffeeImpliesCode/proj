@@ -8,7 +8,7 @@ Upstream files under `src/` are unmodified. Fork-owned additions:
 | `zig/translate.h` | Collects public headers into one translation unit for the facade. |
 | `zig/proj_abi.h` | Declares C wrappers for by-value `PJ_COORD` calls to keep their ABI explicit. |
 | `zig/proj_abi.c` | Calls those upstream functions from C and exposes pointer-shaped wrappers for Zig calls. |
-| `runtime/library.zig` | Defines and validates the provider symbol table for runtime-loaded libraries. |
+| `runtime/library.zig` | Defines and validates the provider symbol table for runtime-loaded libraries, with a comptime branch quota for both complete symbol-set scans. |
 | `runtime/generate.zig` | Parses target translation to generate dispatch and patched native modules with translated C signatures. |
 | `runtime/graph.zig` | Connects generated dispatch, loader core, and translated declarations for runtime calls. |
 | `runtime/loader.zig` | Loads one native provider and resolves symbols for explicit runtime loading. |

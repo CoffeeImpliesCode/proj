@@ -13,7 +13,7 @@ Built from the official PROJ 9.9.0 release.
 
 - `build.zig` replaces upstream CMake and compiles the PROJ library closure, including `src/apps/projinfo_lib.cpp`. The command-line applications and upstream tests are retained but not compiled.
 - The build generates `proj_config.h`, `PROJ_DB_SQL_MD5.h`, and `proj.db` from upstream inputs. `proj.db` is not in the release archive; it is generated from `data/sql/` with a host build of the vendored SQLite amalgamation. No build-time download or system-SQLite mode is used.
-- Static linkage is the default and produces `libproj.a`. `-Dlinkage=dynamic` produces `libproj.so.25.9.0` with soname `libproj.so.25`. `-Druntime=true` selects explicit runtime loading instead of linking the archive; it has no fallback and requires all 292 translated PROJ symbols. There is no `-Dsystem` mode.
+- Static linkage is the default and produces `libproj.a`. `-Dlinkage=dynamic` produces `libproj.so.25.9.0` with soname `libproj.so.25`. `-Druntime=true` selects explicit runtime loading instead of linking the archive; it has no fallback and requires all 292 translated PROJ functions plus the exported data object `pj_release`. There is no `-Dsystem` mode.
 - TIFF and CURL are disabled. The package embeds neither data nor a build-host path, and ships no datum-shift grids. PROJ resolves data through `PROJ_DATA`/`PROJ_LIB` or context search paths; it cannot fetch grids over the network.
 
 ## Last recorded support matrix (observed with Zig 0.16.0)

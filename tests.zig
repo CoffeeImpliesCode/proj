@@ -8,7 +8,7 @@ const proj = @import("proj");
 
 // Setup.
 
-/// A shared object exporting the 292 `proj_*` entry points `src/proj.h` declares.
+/// A shared object exporting the 292 `proj_*` functions and `pj_release` data.
 const provider_variable = "PROJ_TEST_PROVIDER";
 
 /// Where the build installed `proj.db` and the rest of the datum data.
@@ -56,6 +56,18 @@ fn loadProvider() Setup!void {
         return error.MissingProvider;
     }
     try proj.load(.{ .path = value });
+}
+
+test "runtime release data matches the provider release string" {
+    if (proj.runtime_loaded) {
+        try loadProvider();
+        const release: [*:0]const u8 = @ptrCast(proj.c.pj_releaseAddr());
+        const info = proj.version();
+        try std.testing.expectEqualStrings(
+            info.release orelse return error.TestUnexpectedResult,
+            std.mem.span(release),
+        );
+    }
 }
 
 /// Open proj.db from PROJ_DATA and disable network access.
