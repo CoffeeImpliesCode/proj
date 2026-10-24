@@ -33,12 +33,10 @@ The matrix was not rechecked with Zig 0.17.0. The runtime loader is unavailable 
 
 ## Consumption
 
-Add the package by path in a dependent `build.zig.zon`:
+Fetch the package from GitHub into the consumer's `build.zig.zon`:
 
-```zig
-.dependencies = .{
-    .proj = .{ .path = "../proj" },
-},
+```sh
+zig fetch --save git+https://github.com/CoffeeImpliesCode/proj#v9.9.0
 ```
 
 Select a module and, when needed, the native artifact in the dependent `build.zig`:
